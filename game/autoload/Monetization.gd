@@ -26,6 +26,7 @@ var _want_show: bool = false
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS   # работает даже при паузе игры (для коллбэков рекламы)
 	if OS.get_name() == "Android":
 		_setup_yandex()
 	else:
@@ -54,12 +55,18 @@ func _setup_yandex() -> void:
 
 
 # --- Rewarded ----------------------------------------------------------------
+func _pause_game(p: bool) -> void:
+	if get_tree():
+		get_tree().paused = p
+
 func show_rewarded(placement: String) -> void:
 	_pending_placement = placement
 	_reward_earned = false
+	_pause_game(true)   # игра замирает на время ролика (idle, таймер босса)
 	if use_stub:
 		print("[MON][STUB] show_rewarded: ", placement)
 		await get_tree().create_timer(0.4).timeout
+		_pause_game(false)
 		rewarded_completed.emit(placement)
 		return
 	if _yandex.is_rewarded_video_loaded():
@@ -80,10 +87,12 @@ func _on_rv_loaded() -> void:
 func _on_rv_failed(error_code) -> void:
 	push_warning("[MON] rewarded failed to load: %s" % str(error_code))
 	_want_show = false
+	_pause_game(false)
 	rewarded_failed.emit(_pending_placement)
 
 
 func _on_rv_closed() -> void:
+	_pause_game(false)
 	if _reward_earned:
 		rewarded_completed.emit(_pending_placement)
 	else:

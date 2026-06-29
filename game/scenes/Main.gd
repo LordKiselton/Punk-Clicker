@@ -32,8 +32,9 @@ const F_CRIT := 56
 const F_PASSIVE := 28
 
 const ALLY_COLORS := {
-	"golova": Color("#c9a0dc"), "gromoboy": Color("#5bc0eb"),
-	"vedma": Color("#6f9f5a"), "putnik": Color("#e0a85a"),
+	"knight": Color("#7fa6d0"),   # Рыцарь — стальной голубой
+	"vedma": Color("#6f9f5a"),    # Ведьма — зелёный
+	"jester": Color("#d4453f"),   # Шут — кровавый красный
 }
 const MULTS := [1, 10, 100, -1]
 
@@ -47,10 +48,10 @@ const LOCKED_HEROES := ["Старый Волчатник", "Могильщик",
 @onready var _arena: Panel = %Arena
 @onready var _bgrect: TextureRect = %BgRect
 @onready var _enemy: TextureRect = %Enemy
-@onready var _enemy_bar: ProgressBar = %EnemyBar
-@onready var _enemy_name: Label = %EnemyName
+@onready var _hpbar: Panel = %HpBar
 @onready var _tap_zone: Button = %TapBtn
 @onready var _float_layer: Control = %FloatLayer
+@onready var _fx: Control = %FxLayer
 @onready var _gold_label: Label = %GoldLabel
 @onready var _bells_label: Label = %BellsLabel
 @onready var _skulls_label: Label = %SkullsLabel
@@ -71,6 +72,16 @@ var _passive_timer: float = 0.0
 var _card_widgets: Dictionary = {}     # aid -> {frame, portrait, name, cost}
 var _mult_btns: Dictionary = {}
 var _tap_btn: Button = null
+var _flash_tw: Tween = null
+var _enemy_tw: Tween = null
+var _shaking: bool = false
+var _enemy_idx: int = 0
+var _hp_ratio: float = 1.0
+var _hp_trail: float = 1.0
+var _hp_fill: ColorRect = null
+var _hp_trail_rect: ColorRect = null
+var _hp_text: Label = null
+var _coin_cd: float = 0.0
 
 
 func _ready() -> void:
@@ -81,13 +92,15 @@ func _ready() -> void:
 
 	_tap_zone.pressed.connect(_on_tap)
 	_reward_btn.pressed.connect(_on_reward_pressed)
+	_enemy.resized.connect(_update_enemy_pivot)
+	_build_hpbar()
 	_build_cards()
 	_build_action()
 
 	Economy.gold_changed.connect(func(_v): _refresh())
-	Game.stage_changed.connect(func(_s, _l): _update_enemy_visual(); _refresh_pips(); _refresh())
+	Game.stage_changed.connect(func(_s, _l): _refresh_pips(); _refresh())
 	Game.enemy_changed.connect(_on_enemy_changed)
-	Game.enemy_killed.connect(_refresh_pips)
+	Game.enemy_killed.connect(_on_enemy_killed)
 	Game.boss_changed.connect(_on_boss_changed)
 	Game.stats_changed.connect(func(): _build_cards(); _refresh())
 	Monetization.rewarded_completed.connect(_on_rewarded)
@@ -137,9 +150,7 @@ func _apply_styles() -> void:
 	_lab(_title_label, F_TITLE, GOLD)
 	_lab(_stage_label, F_SUB, MUTED)
 	_lab(_boss_label, F_SUB, BLOOD)
-	_lab(_enemy_name, F_SUB, Color("#f0e6cf"))
 	_arena.add_theme_stylebox_override("panel", _flat(ARENA, SURF_BORDER, 16, 2, 0))
-	_bar_style(_enemy_bar)
 	_bar_style(_boss_bar)
 	for s in ["normal", "hover", "pressed", "focus"]:
 		_tap_zone.add_theme_stylebox_override(s, _empty())
@@ -159,7 +170,7 @@ func _load_textures() -> void:
 
 
 func _current_enemy_id() -> String:
-	return "werewolf" if (Game.stage % 2 == 0) else "zombie"
+	return "werewolf" if (_enemy_idx % 2 == 1) else "zombie"
 
 func _update_enemy_visual() -> void:
 	var id := _current_enemy_id()
@@ -192,7 +203,7 @@ func _make_card(aid: String) -> Control:
 	vb.add_theme_constant_override("separation", 5)
 
 	var pf := Panel.new()
-	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, color if recruited else Color("#3a2b44"), 10, 2, 0))
+	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, PORTRAIT_BG, 10, 0, 0))
 	pf.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	pf.clip_contents = true
 	var tr := TextureRect.new()
@@ -217,7 +228,9 @@ func _make_card(aid: String) -> Control:
 	cost.focus_mode = Control.FOCUS_NONE
 	cost.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_style_button(cost, WOOD, WOOD_BORDER, GOLD)
-	cost.pressed.connect(func(): Game.buy_ally_n(aid, _eff_n(Game.ally_max_affordable(aid))))
+	cost.pressed.connect(func():
+		if Game.buy_ally_n(aid, _eff_n(Game.ally_max_affordable(aid))):
+			_fly_coins(_global_center(_gold_label), _global_center(cost), 9, GOLD))
 
 	vb.add_child(pf); vb.add_child(name_l); vb.add_child(cost)
 	card.add_child(vb)
@@ -289,7 +302,9 @@ func _build_action() -> void:
 	_tap_btn.custom_minimum_size = Vector2(0, 60)
 	_tap_btn.focus_mode = Control.FOCUS_NONE
 	_style_button(_tap_btn, SURF, SURF_BORDER, GOLD)
-	_tap_btn.pressed.connect(func(): Game.buy_tap_n(_eff_n(Game.tap_max_affordable())))
+	_tap_btn.pressed.connect(func():
+		if Game.buy_tap_n(_eff_n(Game.tap_max_affordable())):
+			_fly_coins(_global_center(_gold_label), _global_center(_tap_btn), 9, GOLD))
 	_action_bar.add_child(_tap_btn)
 
 func _set_mult(m: int) -> void:
@@ -326,6 +341,9 @@ func _refresh_pips() -> void:
 func _on_tap() -> void:
 	var res: Dictionary = Game.player_tap()
 	_spawn_damage_number(res.damage, res.crit)
+	_flash_enemy()
+	if res.crit:
+		_shake_enemy()
 
 func _on_reward_pressed() -> void:
 	if _reward_btn: _reward_btn.disabled = true
@@ -342,8 +360,13 @@ func _on_reward_failed(_p: String) -> void:
 
 # --- Реакция на модель -------------------------------------------------------
 func _on_enemy_changed(hp: float, max_hp: float) -> void:
-	_enemy_bar.max_value = max_hp
-	_enemy_bar.value = clamp(hp, 0.0, max_hp)
+	var r: float = clamp(hp / max(1.0, max_hp), 0.0, 1.0)
+	if r > _hp_ratio:
+		_hp_trail = r   # новый враг / хил — светлый хвост вверх мгновенно
+	_hp_ratio = r
+	_layout_hp()
+	if _hp_text:
+		_hp_text.text = "%s · %s / %s" % [ENEMY_NAMES.get(_current_enemy_id(), "Нечисть"), fmt(max(0.0, hp)), fmt(max_hp)]
 
 func _on_boss_changed(is_boss: bool, time_left: float) -> void:
 	_boss_label.visible = is_boss
@@ -367,8 +390,6 @@ func _refresh() -> void:
 		_title_label.text = "Проклятый Лес · стадия %d" % Game.stage
 	if _stage_label:
 		_stage_label.text = "урон/тап %s   ·   DPS %s" % [fmt(Game.tap_damage()), fmt(Game.total_dps())]
-	if _enemy_name:
-		_enemy_name.text = "%s · %s / %s" % [ENEMY_NAMES.get(_current_enemy_id(), "Нечисть"), fmt(max(0.0, Game.enemy_hp)), fmt(Game.enemy_max_hp)]
 
 	# карточки героев
 	for aid in _card_widgets:
@@ -381,17 +402,23 @@ func _refresh() -> void:
 		var cost: float = Game.ally_cost_n(aid, max(1, n))
 		w.name.text = "%s · ур.%d" % [def.name, lvl] if lvl > 0 else def.name
 		w.cost.text = ("×%d\n%s" % [max(1, n), fmt(cost)]) if lvl > 0 else ("Нанять\n%s" % fmt(cost))
-		w.cost.disabled = (n < 1)
+		w.cost.disabled = Economy.gold < cost
 
 	# панель действий: удар Шута
 	if is_instance_valid(_tap_btn):
 		var tn: int = _eff_n(Game.tap_max_affordable())
 		_tap_btn.text = "Наточить клинок ×%d   —   %s" % [max(1, tn), fmt(Game.tap_cost_n(max(1, tn)))]
-		_tap_btn.disabled = (tn < 1)
+		_tap_btn.disabled = Economy.gold < Game.tap_cost_n(max(1, tn))
 
 
 # --- Пассивный урон ----------------------------------------------------------
 func _process(delta: float) -> void:
+	if _coin_cd > 0.0:
+		_coin_cd -= delta
+	# светлый «след урона» догоняет основную заливку
+	if _hp_trail > _hp_ratio:
+		_hp_trail = max(_hp_ratio, _hp_trail - delta * 0.7)
+		_layout_hp()
 	if Game.total_dps() <= 0.0:
 		return
 	_passive_timer += delta
@@ -403,30 +430,164 @@ func _process(delta: float) -> void:
 			var d := Game.ally_dps(id) * elapsed
 			if d <= 0.0:
 				continue
-			var pos := Vector2(size.x * (0.30 + 0.13 * i) + randf_range(-10, 10), size.y * 0.40 + randf_range(-16, 16))
-			_float_text(fmt(d), F_PASSIVE, ALLY_COLORS.get(id, GREEN), pos)
+			_float_burst(fmt(d), F_PASSIVE, ALLY_COLORS.get(id, GREEN))
 
 
 # --- Juice -------------------------------------------------------------------
-func _spawn_damage_number(amount: float, crit: bool) -> void:
-	var pos := Vector2(size.x * 0.5 + randf_range(-60, 60), size.y * 0.30)
-	_float_text(("КРИТ! " if crit else "") + fmt(amount), F_CRIT if crit else F_DMG,
-		GOLD if crit else Color("#ffffff"), pos)
+func _enemy_center() -> Vector2:
+	# центр врага в координатах слоя чисел (слой и враг — оба на всю арену)
+	if is_instance_valid(_enemy):
+		return _enemy.position + _enemy.size * 0.5
+	return size * 0.4
 
-func _float_text(text: String, font_size: int, color: Color, pos: Vector2) -> void:
+func _spawn_damage_number(amount: float, crit: bool) -> void:
+	_float_burst(("КРИТ! " if crit else "") + fmt(amount), F_CRIT if crit else F_DMG,
+		GOLD if crit else Color("#ffffff"))
+
+# Цифра вылетает из врага под случайным углом, с поворотом — панк-разлёт
+func _float_burst(text: String, font_size: int, color: Color) -> void:
 	if not is_instance_valid(_float_layer):
 		return
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", color)
-	l.position = pos
+	l.z_index = 10
+	var start := _enemy_center() + Vector2(randf_range(-40, 40), randf_range(-40, 40))
+	l.position = start
+	l.rotation = randf_range(-0.28, 0.28)
+	l.scale = Vector2(1.35, 1.35)
 	_float_layer.add_child(l)
+	var ang := randf_range(-PI * 0.92, -PI * 0.08)   # веер вверх-наружу
+	var target := start + Vector2(cos(ang), sin(ang)) * randf_range(110.0, 220.0)
 	var tw := create_tween()
 	tw.set_parallel(true)
-	tw.tween_property(l, "position:y", l.position.y - 150, 0.7)
-	tw.tween_property(l, "modulate:a", 0.0, 0.7)
+	tw.tween_property(l, "position", target, 0.75).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	tw.tween_property(l, "scale", Vector2.ONE, 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "modulate:a", 0.0, 0.75).set_ease(Tween.EASE_IN)
 	tw.chain().tween_callback(l.queue_free)
+
+# Вспышка по врагу (яркость через self_modulate — не конфликтует с альфой смерти)
+func _flash_enemy() -> void:
+	if not is_instance_valid(_enemy):
+		return
+	if _flash_tw and _flash_tw.is_valid():
+		_flash_tw.kill()
+	_enemy.self_modulate = Color(1.7, 1.7, 1.7, 1.0)
+	_flash_tw = create_tween()
+	_flash_tw.tween_property(_enemy, "self_modulate", Color(1, 1, 1, 1), 0.12)
+
+# Тряска врага — только на крите
+func _shake_enemy() -> void:
+	if _shaking or not is_instance_valid(_enemy):
+		return
+	_shaking = true
+	var base := _enemy.position
+	var tw := create_tween()
+	for i in 5:
+		tw.tween_property(_enemy, "position", base + Vector2(randf_range(-18, 18), randf_range(-12, 12)), 0.035)
+	tw.tween_property(_enemy, "position", base, 0.05)
+	tw.tween_callback(func(): _shaking = false)
+
+func _update_enemy_pivot() -> void:
+	if is_instance_valid(_enemy):
+		_enemy.pivot_offset = _enemy.size * 0.5
+
+# Враг умер: сжался + растаял, затем новый появился
+func _play_enemy_death() -> void:
+	if not is_instance_valid(_enemy):
+		return
+	if _enemy_tw and _enemy_tw.is_valid() and _enemy_tw.is_running():
+		return   # уже играет — не накладываем
+	_update_enemy_pivot()
+	_enemy_tw = create_tween()
+	_enemy_tw.tween_property(_enemy, "scale", Vector2(0.45, 0.45), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	_enemy_tw.parallel().tween_property(_enemy, "modulate:a", 0.0, 0.12)
+	_enemy_tw.tween_callback(_update_enemy_visual)   # смена типа в «погасшем» состоянии
+	_enemy_tw.tween_property(_enemy, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_enemy_tw.parallel().tween_property(_enemy, "modulate:a", 1.0, 0.18)
+
+
+# Враг убит: пипсы, монеты в счётчик, следующий враг другого типа, анимация
+func _on_enemy_killed() -> void:
+	_refresh_pips()
+	if _coin_cd <= 0.0:
+		_coin_cd = 0.12
+		_fly_coins(_global_center(_enemy), _global_center(_gold_label), 14, GOLD)
+	_enemy_idx += 1
+	_play_enemy_death()
+
+
+# --- Крутой HP-бар: фон + светлый «след урона» + кровавая заливка + текст ----
+func _build_hpbar() -> void:
+	if not is_instance_valid(_hpbar):
+		return
+	_hpbar.add_theme_stylebox_override("panel", _flat(DARK, SURF_BORDER, 10, 2, 0))
+	_hp_trail_rect = ColorRect.new()
+	_hp_trail_rect.color = Color("#f3d6bf")
+	_hp_trail_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hpbar.add_child(_hp_trail_rect)
+	_hp_fill = ColorRect.new()
+	_hp_fill.color = BLOOD
+	_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hpbar.add_child(_hp_fill)
+	_hp_text = Label.new()
+	_hp_text.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_hp_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hp_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_hp_text.add_theme_font_size_override("font_size", F_SUB)
+	_hp_text.add_theme_color_override("font_color", Color("#fff2e6"))
+	_hp_text.add_theme_constant_override("outline_size", 6)
+	_hp_text.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	_hp_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hpbar.add_child(_hp_text)
+	_hpbar.resized.connect(_layout_hp)
+	_layout_hp()
+
+func _layout_hp() -> void:
+	if not is_instance_valid(_hpbar):
+		return
+	var pad := 4.0
+	var w: float = max(0.0, _hpbar.size.x - pad * 2.0)
+	var h: float = max(0.0, _hpbar.size.y - pad * 2.0)
+	if is_instance_valid(_hp_trail_rect):
+		_hp_trail_rect.position = Vector2(pad, pad)
+		_hp_trail_rect.size = Vector2(w * _hp_trail, h)
+	if is_instance_valid(_hp_fill):
+		_hp_fill.position = Vector2(pad, pad)
+		_hp_fill.size = Vector2(w * _hp_ratio, h)
+
+
+# --- Полёт монет (поверх всего экрана, по дуге) ------------------------------
+func _global_center(n: Control) -> Vector2:
+	return n.global_position + n.size * 0.5
+
+func _bezier(a: Vector2, b: Vector2, c: Vector2, t: float) -> Vector2:
+	return a.lerp(b, t).lerp(b.lerp(c, t), t)
+
+func _fly_coins(from_pos: Vector2, to_pos: Vector2, count: int, color: Color) -> void:
+	if not is_instance_valid(_fx):
+		return
+	for i in count:
+		var sz: float = randf_range(11.0, 19.0)
+		var coin := Panel.new()
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = color
+		sb.set_corner_radius_all(int(sz * 0.5))
+		sb.set_border_width_all(2)
+		sb.border_color = color.darkened(0.45)
+		coin.add_theme_stylebox_override("panel", sb)
+		coin.size = Vector2(sz, sz)
+		coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var start: Vector2 = from_pos + Vector2(randf_range(-34, 34), randf_range(-34, 34))
+		coin.position = start - coin.size * 0.5
+		_fx.add_child(coin)
+		var ctrl: Vector2 = (start + to_pos) * 0.5 + Vector2(randf_range(-90, 90), randf_range(-180, -50))
+		var dur: float = randf_range(0.45, 0.72)
+		var tw := create_tween()
+		tw.tween_interval(i * 0.018)
+		tw.tween_method(func(t: float): coin.position = _bezier(start, ctrl, to_pos, t) - coin.size * 0.5, 0.0, 1.0, dur).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		tw.tween_callback(coin.queue_free)
 
 
 func fmt(n: float) -> String:
