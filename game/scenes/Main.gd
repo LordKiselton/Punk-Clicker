@@ -44,6 +44,7 @@ const ENEMY_NAMES := {"zombie": "Зомби", "werewolf": "Вервольф"}
 const ALLY_TEX_PATHS := {"knight": "res://art/troupe/knight.png", "vedma": "res://art/troupe/vedma.png", "jester": "res://art/troupe/jester.png"}
 # Закрытые карточки «Скоро» — будущий ростер из LORE.md
 const LOCKED_HEROES := ["Старый Волчатник", "Могильщик", "Гнилой Бунтарь", "Кукловод", "Слепой Гусляр", "Палач", "Дурень-Громобой", "Болтливая Голова", "Вдова-в-Чёрном", "Северный Налётчик", "Шарманщик", "Утопленница", "Звонарь", "Путник в Цилиндре"]
+const LOCATIONS := ["Проклятый Лес", "Погост", "Кривой Трактир", "Старая Усадьба", "Ярмарка-Балаган", "Замок Короля"]
 
 @onready var _arena: Panel = %Arena
 @onready var _bgrect: TextureRect = %BgRect
@@ -77,9 +78,8 @@ var _enemy_tw: Tween = null
 var _shaking: bool = false
 var _enemy_idx: int = 0
 var _hp_ratio: float = 1.0
-var _hp_trail: float = 1.0
+var _hp_last_flash: float = 1.0
 var _hp_fill: ColorRect = null
-var _hp_trail_rect: ColorRect = null
 var _hp_text: Label = null
 var _coin_cd: float = 0.0
 
@@ -110,6 +110,8 @@ func _ready() -> void:
 	_on_boss_changed(Game.is_boss, Game.boss_time_left)
 	_set_mult(_buy_mult)
 	_refresh()
+	if Game.last_offline_income > 0.0:
+		_show_offline_popup.call_deferred(Game.last_offline_income)
 
 
 # --- Стиль -------------------------------------------------------------------
@@ -155,6 +157,7 @@ func _apply_styles() -> void:
 	for s in ["normal", "hover", "pressed", "focus"]:
 		_tap_zone.add_theme_stylebox_override(s, _empty())
 	_reward_btn.add_theme_font_size_override("font_size", F_SUB)
+	_reward_btn.text = "▶ Клад"
 	_style_button(_reward_btn, WOOD, WOOD_BORDER, GOLD)
 
 
@@ -351,7 +354,9 @@ func _on_reward_pressed() -> void:
 
 func _on_rewarded(placement: String) -> void:
 	if placement == "double_gold":
-		Economy.add_gold(Economy.gold)
+		Economy.add_gold(Game.rewarded_gold_bonus())
+		if _reward_btn:
+			_fly_coins(_global_center(_reward_btn), _global_center(_gold_label), 16, GOLD)
 	if _reward_btn: _reward_btn.disabled = false
 
 func _on_reward_failed(_p: String) -> void:
@@ -361,8 +366,11 @@ func _on_reward_failed(_p: String) -> void:
 # --- Реакция на модель -------------------------------------------------------
 func _on_enemy_changed(hp: float, max_hp: float) -> void:
 	var r: float = clamp(hp / max(1.0, max_hp), 0.0, 1.0)
-	if r > _hp_ratio:
-		_hp_trail = r   # новый враг / хил — светлый хвост вверх мгновенно
+	if r >= _hp_ratio:
+		_hp_last_flash = r   # хил / новый враг — без укуса
+	elif _hp_last_flash - r >= 0.02:
+		_spawn_hp_bite(_hp_last_flash, r)   # «укус» по утраченному куску
+		_hp_last_flash = r
 	_hp_ratio = r
 	_layout_hp()
 	if _hp_text:
@@ -387,7 +395,8 @@ func _refresh() -> void:
 	if _skulls_label:
 		_skulls_label.text = "☠ %d" % Economy.skulls
 	if _title_label:
-		_title_label.text = "Проклятый Лес · стадия %d" % Game.stage
+		var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
+		_title_label.text = "%s · стадия %d" % [loc, Game.stage]
 	if _stage_label:
 		_stage_label.text = "урон/тап %s   ·   DPS %s" % [fmt(Game.tap_damage()), fmt(Game.total_dps())]
 
@@ -415,10 +424,6 @@ func _refresh() -> void:
 func _process(delta: float) -> void:
 	if _coin_cd > 0.0:
 		_coin_cd -= delta
-	# светлый «след урона» догоняет основную заливку
-	if _hp_trail > _hp_ratio:
-		_hp_trail = max(_hp_ratio, _hp_trail - delta * 0.7)
-		_layout_hp()
 	if Game.total_dps() <= 0.0:
 		return
 	_passive_timer += delta
@@ -523,10 +528,6 @@ func _build_hpbar() -> void:
 	if not is_instance_valid(_hpbar):
 		return
 	_hpbar.add_theme_stylebox_override("panel", _flat(DARK, SURF_BORDER, 10, 2, 0))
-	_hp_trail_rect = ColorRect.new()
-	_hp_trail_rect.color = Color("#f3d6bf")
-	_hp_trail_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hpbar.add_child(_hp_trail_rect)
 	_hp_fill = ColorRect.new()
 	_hp_fill.color = BLOOD
 	_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -540,6 +541,7 @@ func _build_hpbar() -> void:
 	_hp_text.add_theme_constant_override("outline_size", 6)
 	_hp_text.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	_hp_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hp_text.z_index = 5   # текст поверх «укусов»
 	_hpbar.add_child(_hp_text)
 	_hpbar.resized.connect(_layout_hp)
 	_layout_hp()
@@ -550,12 +552,26 @@ func _layout_hp() -> void:
 	var pad := 4.0
 	var w: float = max(0.0, _hpbar.size.x - pad * 2.0)
 	var h: float = max(0.0, _hpbar.size.y - pad * 2.0)
-	if is_instance_valid(_hp_trail_rect):
-		_hp_trail_rect.position = Vector2(pad, pad)
-		_hp_trail_rect.size = Vector2(w * _hp_trail, h)
 	if is_instance_valid(_hp_fill):
 		_hp_fill.position = Vector2(pad, pad)
 		_hp_fill.size = Vector2(w * _hp_ratio, h)
+
+# «Укус» — светлый кусок на отъеденной части HP, быстро гаснет
+func _spawn_hp_bite(from_r: float, to_r: float) -> void:
+	if not is_instance_valid(_hpbar):
+		return
+	var pad := 4.0
+	var w: float = max(0.0, _hpbar.size.x - pad * 2.0)
+	var h: float = max(0.0, _hpbar.size.y - pad * 2.0)
+	var bite := ColorRect.new()
+	bite.color = Color(1, 1, 1, 0.85)
+	bite.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bite.position = Vector2(pad + w * to_r, pad)
+	bite.size = Vector2(w * (from_r - to_r), h)
+	_hpbar.add_child(bite)
+	var tw := create_tween()
+	tw.tween_property(bite, "modulate:a", 0.0, 0.22).set_ease(Tween.EASE_IN)
+	tw.tween_callback(bite.queue_free)
 
 
 # --- Полёт монет (поверх всего экрана, по дуге) ------------------------------
@@ -590,12 +606,56 @@ func _fly_coins(from_pos: Vector2, to_pos: Vector2, count: int, color: Color) ->
 		tw.tween_callback(coin.queue_free)
 
 
+# Окно «Пока тебя не было…» (золото уже начислено, окно информирует)
+func _show_offline_popup(amount: float) -> void:
+	if not is_instance_valid(_fx):
+		return
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_fx.add_child(dim)
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _flat(SURF, GOLD, 16, 3, 22))
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	dim.add_child(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 14)
+	var t := Label.new()
+	t.text = "Пока тебя не было…"
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(t, F_BODY, TXT)
+	var a := Label.new()
+	a.text = "+%s золота" % fmt(amount)
+	a.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(a, F_TITLE, GOLD)
+	var ok := Button.new()
+	ok.text = "Забрать"
+	ok.add_theme_font_size_override("font_size", F_BODY)
+	ok.custom_minimum_size = Vector2(220, 64)
+	ok.focus_mode = Control.FOCUS_NONE
+	_style_button(ok, WOOD, WOOD_BORDER, GOLD)
+	ok.pressed.connect(func():
+		_fly_coins(_global_center(ok), _global_center(_gold_label), 18, GOLD)
+		dim.queue_free())
+	vb.add_child(t); vb.add_child(a); vb.add_child(ok)
+	panel.add_child(vb)
+
+
+const _UNITS := ["", "K", "M", "B", "T", "aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai", "aj", "ak", "al", "am", "an", "ao", "ap", "aq", "ar", "as", "at", "au", "av", "aw", "ax", "ay", "az"]
+
 func fmt(n: float) -> String:
 	if n < 1000.0:
 		return str(int(round(n)))
-	var units := ["", "K", "M", "B", "T", "aa", "ab", "ac", "ad", "ae"]
 	var i := 0
-	while n >= 1000.0 and i < units.size() - 1:
+	while n >= 1000.0 and i < _UNITS.size() - 1:
 		n /= 1000.0
 		i += 1
-	return "%.2f%s" % [n, units[i]]
+	if n >= 1000.0:
+		return "%.2e" % (n * pow(1000.0, i))   # за пределами суффиксов — научная
+	var s := "%.2f" % n
+	if s.ends_with(".00"):
+		s = s.substr(0, s.length() - 3)
+	elif s.ends_with("0"):
+		s = s.substr(0, s.length() - 1)
+	return s + _UNITS[i]

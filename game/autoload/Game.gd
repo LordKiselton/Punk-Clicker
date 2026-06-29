@@ -34,6 +34,8 @@ var is_boss: bool = false
 var boss_time_left: float = 0.0
 
 var _save_timer: float = 0.0
+var last_offline_income: float = 0.0   # для окна «Пока тебя не было…»
+var _pending_offline_time: int = 0
 
 
 func _ready() -> void:
@@ -41,7 +43,14 @@ func _ready() -> void:
 		ally_levels[id] = 0
 	load_game()
 	_spawn_enemy()
+	_apply_offline(_pending_offline_time)   # после спавна — корректный idle-доход
 	set_process(true)
+
+
+func _notification(what: int) -> void:
+	# Сохраняемся при сворачивании/выходе, чтобы не терять прогресс
+	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		save_game()
 
 
 # --- Производные величины (формулы) -----------------------------------------
@@ -130,6 +139,10 @@ func idle_gold_per_sec() -> float:
 	if enemy_max_hp <= 0.0:
 		return 0.0
 	return total_dps() / enemy_max_hp * _enemy_gold()
+
+# Награда за rewarded: ~30 мин idle-дохода или ~25 убийств (что больше)
+func rewarded_gold_bonus() -> float:
+	return max(idle_gold_per_sec() * 1800.0, _enemy_gold() * 25.0)
 
 
 # --- Враги / стадии ----------------------------------------------------------
@@ -270,7 +283,7 @@ func load_game() -> void:
 	if typeof(saved_allies) == TYPE_DICTIONARY:
 		for id in ALLY_ORDER:
 			ally_levels[id] = int(saved_allies.get(id, 0))
-	_apply_offline(int(data.get("time", 0)))
+	_pending_offline_time = int(data.get("time", 0))
 
 func _apply_offline(saved_time: int) -> void:
 	if saved_time <= 0:
@@ -281,7 +294,8 @@ func _apply_offline(saved_time: int) -> void:
 		return
 	var cap: float = Balance.OFFLINE_CAP_HOURS * 3600.0
 	elapsed = min(elapsed, cap)
-	var income: float = total_dps() * elapsed * Balance.OFFLINE_RATE
+	var income: float = idle_gold_per_sec() * elapsed * Balance.OFFLINE_RATE
 	if income > 0.0:
+		last_offline_income = income
 		Economy.add_gold(income)
 		print("[OFFLINE] Начислено золота за %.0f сек: %.1f" % [elapsed, income])
