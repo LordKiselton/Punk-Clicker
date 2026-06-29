@@ -13,6 +13,8 @@ signal enemy_killed
 signal boss_changed(is_boss: bool, time_left: float)
 signal stats_changed   # урон/DPS/стоимости поменялись (обновить UI кнопок)
 signal hero_attacked(id: String, amount: float)   # герой ударил (дискретно)
+signal punk_charge_changed(ratio: float)           # заряд панк-рока 0..1
+signal punk_state_changed(active: bool, time_left: float)  # режим вкл/выкл + остаток
 
 # --- Стартовая труппа (MVP). Полный список — в LORE.md. ---------------------
 # atk = интервал атаки в секундах (свой ритм у каждого героя)
@@ -39,6 +41,11 @@ var _save_timer: float = 0.0
 var last_offline_income: float = 0.0   # для окна «Пока тебя не было…»
 var _pending_offline_time: int = 0
 var _atk_timers: Dictionary = {}       # id -> накопленное время до атаки
+
+# --- ПОЛНЫЙ ПАНК-РОК ---------------------------------------------------------
+var punk_charge: float = 0.0           # 0..1, копится от тапов игрока
+var punk_active: bool = false
+var punk_time_left: float = 0.0
 
 
 func _ready() -> void:
@@ -148,6 +155,37 @@ func rewarded_gold_bonus() -> float:
 	return max(idle_gold_per_sec() * 1800.0, _enemy_gold() * 25.0)
 
 
+# --- ПОЛНЫЙ ПАНК-РОК ---------------------------------------------------------
+func punk_dmg_mult() -> float:
+	return Balance.PUNK_DMG_MULT if punk_active else 1.0
+
+func punk_speed_mult() -> float:
+	return Balance.PUNK_SPEED_MULT if punk_active else 1.0
+
+func punk_gold_mult() -> float:
+	return Balance.PUNK_GOLD_MULT if punk_active else 1.0
+
+func punk_ready() -> bool:
+	return punk_charge >= 1.0 and not punk_active
+
+func _add_punk_charge() -> void:
+	# заряд только от тапов игрока и только когда режим не активен
+	if punk_active or punk_charge >= 1.0:
+		return
+	punk_charge = min(1.0, punk_charge + 1.0 / float(max(1, Balance.PUNK_TAPS_TO_FULL)))
+	punk_charge_changed.emit(punk_charge)
+
+func activate_punk() -> bool:
+	if not punk_ready():
+		return false
+	punk_active = true
+	punk_time_left = Balance.PUNK_DURATION_SEC
+	punk_charge = 0.0   # тратим заряд
+	punk_charge_changed.emit(punk_charge)
+	punk_state_changed.emit(true, punk_time_left)
+	return true
+
+
 # --- Враги / стадии ----------------------------------------------------------
 func _enemies_needed() -> int:
 	return 1 if is_boss else Balance.ENEMIES_PER_STAGE
@@ -163,7 +201,7 @@ func _spawn_enemy() -> void:
 
 func _enemy_gold() -> float:
 	var g: float = Balance.ENEMY_GOLD_BASE * pow(Balance.ENEMY_GOLD_GROWTH, stage - 1)
-	return g * (Balance.BOSS_GOLD_MULT if is_boss else 1.0)
+	return g * (Balance.BOSS_GOLD_MULT if is_boss else 1.0) * punk_gold_mult()
 
 func _hit_enemy(amount: float) -> void:
 	if amount <= 0.0:
@@ -202,7 +240,8 @@ func _retreat_stage() -> void:
 # --- Действия игрока ---------------------------------------------------------
 func player_tap() -> Dictionary:
 	# Возвращает инфо для juice/UI: {"damage":x, "crit":bool}
-	var dmg: float = tap_damage()
+	_add_punk_charge()                 # заряд панк-рока копится от тапов игрока
+	var dmg: float = tap_damage() * punk_dmg_mult()
 	var crit: bool = randf() < Balance.CRIT_CHANCE
 	if crit:
 		dmg *= Balance.CRIT_MULT
@@ -228,15 +267,26 @@ func buy_ally(id: String) -> bool:
 
 # --- Тик: idle-DPS + таймер босса -------------------------------------------
 func _process(delta: float) -> void:
+	# ПОЛНЫЙ ПАНК-РОК: тикаем таймер режима (сигнал — только на смене состояния,
+	# обратный отсчёт UI читает из punk_time_left сам)
+	if punk_active:
+		punk_time_left -= delta
+		if punk_time_left <= 0.0:
+			punk_active = false
+			punk_time_left = 0.0
+			punk_state_changed.emit(false, 0.0)
+
 	# Дискретные атаки: каждый герой бьёт в свой ритм (чанк урона + сигнал)
+	var sp: float = punk_speed_mult()   # в раже атакуют чаще
+	var dm: float = punk_dmg_mult()
 	for id in ALLY_ORDER:
 		if ally_levels.get(id, 0) <= 0:
 			continue
-		_atk_timers[id] = float(_atk_timers.get(id, 0.0)) + delta
+		_atk_timers[id] = float(_atk_timers.get(id, 0.0)) + delta * sp
 		var atk: float = ALLIES[id].get("atk", 0.6)
 		if _atk_timers[id] >= atk:
 			_atk_timers[id] -= atk
-			var dmg: float = ally_dps(id) * atk
+			var dmg: float = ally_dps(id) * atk * dm
 			hero_attacked.emit(id, dmg)
 			_hit_enemy(dmg)
 
@@ -295,6 +345,35 @@ func load_game() -> void:
 		for id in ALLY_ORDER:
 			ally_levels[id] = int(saved_allies.get(id, 0))
 	_pending_offline_time = int(data.get("time", 0))
+
+func reset_progress() -> void:
+	# Полный сброс прогресса (из настроек)
+	var d := DirAccess.open("user://")
+	if d and d.file_exists("save.json"):
+		d.remove("save.json")
+	tap_level = 0
+	for id in ALLY_ORDER:
+		ally_levels[id] = 0
+	stage = 1
+	max_stage = 1
+	kills_on_stage = 0
+	_atk_timers.clear()
+	punk_charge = 0.0
+	punk_active = false
+	punk_time_left = 0.0
+	last_offline_income = 0.0
+	Economy.gold = 0.0
+	Economy.bells = 0
+	Economy.skulls = 0
+	Economy.gold_changed.emit(0.0)
+	Economy.bells_changed.emit(0)
+	Economy.skulls_changed.emit(0)
+	punk_charge_changed.emit(0.0)
+	punk_state_changed.emit(false, 0.0)
+	_spawn_enemy()
+	stage_changed.emit(stage, location())
+	stats_changed.emit()
+
 
 func _apply_offline(saved_time: int) -> void:
 	if saved_time <= 0:

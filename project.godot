@@ -15,6 +15,7 @@ config/description="Боевой кликер в мире панк-сказки.
 run/main_scene="res://game/scenes/Main.tscn"
 config/features=PackedStringArray("4.6", "Mobile")
 config/icon="res://icon.svg"
+boot_splash/bg_color=Color(0.101961, 0.07451, 0.12549, 1)
 
 [autoload]
 
@@ -22,6 +23,10 @@ Balance="*res://game/config/Balance.gd"
 Economy="*res://game/autoload/Economy.gd"
 Monetization="*res://game/autoload/Monetization.gd"
 Game="*res://game/autoload/Game.gd"
+
+[audio]
+
+driver/enable_input=true
 
 [display]
 
@@ -35,7 +40,14 @@ window/handheld/orientation=1
 
 enabled=PackedStringArray("res://addons/GodotAndroidYandexAds/plugin.cfg")
 
+[input_devices]
+
+sensors/enable_accelerometer=true
+sensors/enable_gravity=true
+sensors/enable_gyroscope=true
+
 [rendering]
 
 renderer/rendering_method="mobile"
 textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.101961, 0.07451, 0.12549, 1)
