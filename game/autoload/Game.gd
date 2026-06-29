@@ -1,0 +1,287 @@
+# =============================================================================
+#  Game.gd — ИГРОВАЯ МОДЕЛЬ «Балагана» (без UI).
+#  Autoload-синглтон. Держит прогрессию по Тропе, бой, труппу (idle-DPS),
+#  прокачку, сохранение/загрузку и оффлайн-доход. UI (Main.gd) только читает
+#  состояние и зовёт методы; вся логика — здесь.
+#  Формулы и числа берём из Balance.gd (см. GDD.md §3).
+# =============================================================================
+extends Node
+
+signal stage_changed(stage: int, location: int)
+signal enemy_changed(hp: float, max_hp: float)
+signal enemy_killed
+signal boss_changed(is_boss: bool, time_left: float)
+signal stats_changed   # урон/DPS/стоимости поменялись (обновить UI кнопок)
+
+# --- Стартовая труппа (MVP). Полный список — в LORE.md. ---------------------
+const ALLIES := {
+	"knight": {"name": "Рыцарь", "base_dps": 3.0,   "base_cost": 15.0,   "growth": 1.08},
+	"vedma":  {"name": "Ведьма", "base_dps": 18.0,  "base_cost": 150.0,  "growth": 1.10},
+	"jester": {"name": "Шут",    "base_dps": 110.0, "base_cost": 1800.0, "growth": 1.11},
+}
+const ALLY_ORDER := ["knight", "vedma", "jester"]
+
+# --- Состояние ---------------------------------------------------------------
+var stage: int = 1
+var max_stage: int = 1
+var tap_level: int = 0
+var ally_levels: Dictionary = {}      # id -> int
+var kills_on_stage: int = 0
+
+var enemy_hp: float = 0.0
+var enemy_max_hp: float = 0.0
+var is_boss: bool = false
+var boss_time_left: float = 0.0
+
+var _save_timer: float = 0.0
+
+
+func _ready() -> void:
+	for id in ALLY_ORDER:
+		ally_levels[id] = 0
+	load_game()
+	_spawn_enemy()
+	set_process(true)
+
+
+# --- Производные величины (формулы) -----------------------------------------
+func location() -> int:
+	return int((stage - 1) / Balance.STAGES_PER_LOCATION) + 1
+
+func tap_damage() -> float:
+	return Balance.TAP_DAMAGE_BASE * pow(Balance.TAP_DAMAGE_GROWTH, tap_level)
+
+func ally_dps(id: String) -> float:
+	var lvl: int = ally_levels.get(id, 0)
+	if lvl <= 0:
+		return 0.0
+	var def: Dictionary = ALLIES[id]
+	var milestones: int = int(lvl / Balance.ALLY_MILESTONE_EVERY)
+	return def.base_dps * lvl * pow(Balance.ALLY_MILESTONE_MULT, milestones)
+
+func total_dps() -> float:
+	var sum: float = 0.0
+	for id in ALLY_ORDER:
+		sum += ally_dps(id)
+	return sum
+
+func tap_upgrade_cost() -> float:
+	return Balance.TAP_UPGRADE_BASE_COST * pow(Balance.TAP_UPGRADE_GROWTH, tap_level)
+
+func ally_cost(id: String) -> float:
+	var def: Dictionary = ALLIES[id]
+	return def.base_cost * pow(def.growth, ally_levels.get(id, 0))
+
+# --- Множитель покупки (x1/x10/x100/MAX) ------------------------------------
+# Сумма геометрической прогрессии: цена n уровней начиная с текущего.
+func ally_cost_n(id: String, n: int) -> float:
+	if n <= 0:
+		return 0.0
+	var def: Dictionary = ALLIES[id]
+	var g: float = def.growth
+	var lvl: int = ally_levels.get(id, 0)
+	return def.base_cost * pow(g, lvl) * (pow(g, n) - 1.0) / (g - 1.0)
+
+func ally_max_affordable(id: String) -> int:
+	var def: Dictionary = ALLIES[id]
+	var g: float = def.growth
+	var lvl: int = ally_levels.get(id, 0)
+	var c0: float = def.base_cost * pow(g, lvl)   # цена следующего уровня
+	if Economy.gold < c0:
+		return 0
+	return int(floor(log(1.0 + Economy.gold * (g - 1.0) / c0) / log(g)))
+
+func buy_ally_n(id: String, n: int) -> bool:
+	if not ALLIES.has(id) or n <= 0:
+		return false
+	if Economy.spend_gold(ally_cost_n(id, n)):
+		ally_levels[id] = int(ally_levels.get(id, 0)) + n
+		stats_changed.emit()
+		return true
+	return false
+
+func tap_cost_n(n: int) -> float:
+	if n <= 0:
+		return 0.0
+	var g: float = Balance.TAP_UPGRADE_GROWTH
+	return Balance.TAP_UPGRADE_BASE_COST * pow(g, tap_level) * (pow(g, n) - 1.0) / (g - 1.0)
+
+func tap_max_affordable() -> int:
+	var g: float = Balance.TAP_UPGRADE_GROWTH
+	var c0: float = Balance.TAP_UPGRADE_BASE_COST * pow(g, tap_level)
+	if Economy.gold < c0:
+		return 0
+	return int(floor(log(1.0 + Economy.gold * (g - 1.0) / c0) / log(g)))
+
+func buy_tap_n(n: int) -> bool:
+	if n <= 0:
+		return false
+	if Economy.spend_gold(tap_cost_n(n)):
+		tap_level += n
+		stats_changed.emit()
+		return true
+	return false
+
+# --- Прогресс волны и оценка дохода ------------------------------------------
+func enemies_needed() -> int:
+	return _enemies_needed()
+
+func idle_gold_per_sec() -> float:
+	if enemy_max_hp <= 0.0:
+		return 0.0
+	return total_dps() / enemy_max_hp * _enemy_gold()
+
+
+# --- Враги / стадии ----------------------------------------------------------
+func _enemies_needed() -> int:
+	return 1 if is_boss else Balance.ENEMIES_PER_STAGE
+
+func _spawn_enemy() -> void:
+	is_boss = (stage % Balance.BOSS_EVERY == 0)
+	var base_hp: float = Balance.ENEMY_HP_BASE * pow(Balance.ENEMY_HP_GROWTH, stage - 1)
+	enemy_max_hp = base_hp * (Balance.BOSS_HP_MULT if is_boss else 1.0)
+	enemy_hp = enemy_max_hp
+	boss_time_left = Balance.BOSS_TIMER_SEC if is_boss else 0.0
+	enemy_changed.emit(enemy_hp, enemy_max_hp)
+	boss_changed.emit(is_boss, boss_time_left)
+
+func _enemy_gold() -> float:
+	var g: float = Balance.ENEMY_GOLD_BASE * pow(Balance.ENEMY_GOLD_GROWTH, stage - 1)
+	return g * (Balance.BOSS_GOLD_MULT if is_boss else 1.0)
+
+func _hit_enemy(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	enemy_hp -= amount
+	if enemy_hp <= 0.0:
+		_on_enemy_killed()
+	else:
+		enemy_changed.emit(enemy_hp, enemy_max_hp)
+
+func _on_enemy_killed() -> void:
+	Economy.add_gold(_enemy_gold())
+	enemy_killed.emit()
+	kills_on_stage += 1
+	if kills_on_stage >= _enemies_needed():
+		_advance_stage()
+	else:
+		_spawn_enemy()
+
+func _advance_stage() -> void:
+	kills_on_stage = 0
+	stage += 1
+	max_stage = max(max_stage, stage)
+	stage_changed.emit(stage, location())
+	_spawn_enemy()
+
+func _retreat_stage() -> void:
+	# босс не побеждён вовремя — откат на 1 стадию (не ниже начала локации)
+	kills_on_stage = 0
+	var loc_start: int = (location() - 1) * Balance.STAGES_PER_LOCATION + 1
+	stage = max(loc_start, stage - 1)
+	stage_changed.emit(stage, location())
+	_spawn_enemy()
+
+
+# --- Действия игрока ---------------------------------------------------------
+func player_tap() -> Dictionary:
+	# Возвращает инфо для juice/UI: {"damage":x, "crit":bool}
+	var dmg: float = tap_damage()
+	var crit: bool = randf() < Balance.CRIT_CHANCE
+	if crit:
+		dmg *= Balance.CRIT_MULT
+	_hit_enemy(dmg)
+	return {"damage": dmg, "crit": crit}
+
+func buy_tap_upgrade() -> bool:
+	if Economy.spend_gold(tap_upgrade_cost()):
+		tap_level += 1
+		stats_changed.emit()
+		return true
+	return false
+
+func buy_ally(id: String) -> bool:
+	if not ALLIES.has(id):
+		return false
+	if Economy.spend_gold(ally_cost(id)):
+		ally_levels[id] = int(ally_levels.get(id, 0)) + 1
+		stats_changed.emit()
+		return true
+	return false
+
+
+# --- Тик: idle-DPS + таймер босса -------------------------------------------
+func _process(delta: float) -> void:
+	var dps: float = total_dps()
+	if dps > 0.0:
+		_hit_enemy(dps * delta)
+
+	if is_boss and boss_time_left > 0.0:
+		boss_time_left -= delta
+		boss_changed.emit(true, boss_time_left)
+		if boss_time_left <= 0.0:
+			_retreat_stage()
+
+	_save_timer += delta
+	if _save_timer >= Balance.AUTOSAVE_INTERVAL_SEC:
+		_save_timer = 0.0
+		save_game()
+
+
+# --- Сохранение / загрузка / оффлайн ----------------------------------------
+func _snapshot() -> Dictionary:
+	return {
+		"gold": Economy.gold,
+		"bells": Economy.bells,
+		"skulls": Economy.skulls,
+		"tap_level": tap_level,
+		"ally_levels": ally_levels,
+		"stage": stage,
+		"max_stage": max_stage,
+		"kills_on_stage": kills_on_stage,
+		"time": int(Time.get_unix_time_from_system()),
+	}
+
+func save_game() -> void:
+	var f := FileAccess.open(Balance.SAVE_PATH, FileAccess.WRITE)
+	if f == null:
+		push_warning("Не удалось открыть сейв для записи")
+		return
+	f.store_string(JSON.stringify(_snapshot()))
+	f.close()
+
+func load_game() -> void:
+	if not FileAccess.file_exists(Balance.SAVE_PATH):
+		return
+	var f := FileAccess.open(Balance.SAVE_PATH, FileAccess.READ)
+	if f == null:
+		return
+	var text := f.get_as_text()
+	f.close()
+	var data = JSON.parse_string(text)
+	if typeof(data) != TYPE_DICTIONARY:
+		return
+	Economy.set_from_save(data)
+	tap_level = int(data.get("tap_level", 0))
+	stage = int(data.get("stage", 1))
+	max_stage = int(data.get("max_stage", stage))
+	kills_on_stage = int(data.get("kills_on_stage", 0))
+	var saved_allies = data.get("ally_levels", {})
+	if typeof(saved_allies) == TYPE_DICTIONARY:
+		for id in ALLY_ORDER:
+			ally_levels[id] = int(saved_allies.get(id, 0))
+	_apply_offline(int(data.get("time", 0)))
+
+func _apply_offline(saved_time: int) -> void:
+	if saved_time <= 0:
+		return
+	var now: int = int(Time.get_unix_time_from_system())
+	var elapsed: float = float(now - saved_time)
+	if elapsed <= 0.0:
+		return
+	var cap: float = Balance.OFFLINE_CAP_HOURS * 3600.0
+	elapsed = min(elapsed, cap)
+	var income: float = total_dps() * elapsed * Balance.OFFLINE_RATE
+	if income > 0.0:
+		Economy.add_gold(income)
+		print("[OFFLINE] Начислено золота за %.0f сек: %.1f" % [elapsed, income])

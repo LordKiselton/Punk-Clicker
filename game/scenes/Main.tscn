@@ -1,0 +1,264 @@
+[gd_scene format=3 uid="uid://bb5jflhu48ebk"]
+
+[ext_resource type="Script" uid="uid://dvcojhsh1vww0" path="res://game/scenes/Main.gd" id="1_main"]
+[ext_resource type="Texture2D" uid="uid://yx516hicw35i" path="res://art/bg/forest.png" id="2_bg"]
+[ext_resource type="Texture2D" uid="uid://calvu683h74ql" path="res://art/heroes/jester.png" id="3_enemy"]
+[ext_resource type="Texture2D" uid="uid://c5nrmoygnqbu1" path="res://art/troupe/vedma.png" id="4_hero"]
+[ext_resource type="Texture2D" path="res://art/enemies/zombie.png" id="5_zombie"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_main")
+
+[node name="Bg" type="ColorRect" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.102, 0.075, 0.125, 1)
+
+[node name="Arena" type="Panel" parent="."]
+unique_name_in_owner = true
+clip_contents = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 18.0
+offset_top = 256.0
+offset_right = -18.0
+offset_bottom = -548.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="BgRect" type="TextureRect" parent="Arena"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -102.0
+offset_top = -15.0
+offset_right = 120.0
+offset_bottom = 234.37561
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = ExtResource("2_bg")
+expand_mode = 5
+stretch_mode = 4
+
+[node name="Enemy" type="TextureRect" parent="Arena"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -256.0
+offset_top = 70.0
+offset_right = 266.0
+offset_bottom = 464.0
+grow_horizontal = 2
+mouse_filter = 2
+texture = ExtResource("5_zombie")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="EnemyBar" type="ProgressBar" parent="Arena"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 24.0
+offset_top = 18.0
+offset_right = -24.0
+offset_bottom = 48.0
+grow_horizontal = 2
+mouse_filter = 2
+show_percentage = false
+
+[node name="EnemyName" type="Label" parent="Arena"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 50.0
+grow_horizontal = 2
+horizontal_alignment = 1
+
+[node name="TapBtn" type="Button" parent="Arena"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+focus_mode = 0
+flat = true
+
+[node name="FloatLayer" type="Control" parent="Arena"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="RewardBtn" type="Button" parent="Arena"]
+unique_name_in_owner = true
+layout_mode = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -104.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = 60.0
+grow_horizontal = 0
+focus_mode = 0
+text = "▶ ×2"
+
+[node name="TopBar" type="HBoxContainer" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 18.0
+offset_top = 28.0
+offset_right = -18.0
+offset_bottom = 84.0
+grow_horizontal = 2
+theme_override_constants/separation = 10
+
+[node name="GoldLabel" type="Label" parent="TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="Sp" type="Control" parent="TopBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="BellsLabel" type="Label" parent="TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="SkullsLabel" type="Label" parent="TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="Title" type="VBoxContainer" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 18.0
+offset_top = 96.0
+offset_right = -18.0
+offset_bottom = 246.0
+grow_horizontal = 2
+theme_override_constants/separation = 5
+
+[node name="TitleLabel" type="Label" parent="Title"]
+unique_name_in_owner = true
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="StageLabel" type="Label" parent="Title"]
+unique_name_in_owner = true
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="Pips" type="HBoxContainer" parent="Title"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="BossLabel" type="Label" parent="Title"]
+unique_name_in_owner = true
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="BossBar" type="ProgressBar" parent="Title"]
+unique_name_in_owner = true
+layout_mode = 2
+show_percentage = false
+
+[node name="TroupeRail" type="ScrollContainer" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = -540.0
+offset_right = -8.0
+offset_bottom = -150.0
+grow_horizontal = 2
+grow_vertical = 0
+vertical_scroll_mode = 0
+
+[node name="Cards" type="HBoxContainer" parent="TroupeRail"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 10
+
+[node name="P1" type="TextureRect" parent="TroupeRail/Cards"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+size_flags_vertical = 3
+texture = ExtResource("4_hero")
+expand_mode = 1
+stretch_mode = 5
+mouse_filter = 2
+
+[node name="P2" type="TextureRect" parent="TroupeRail/Cards"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+size_flags_vertical = 3
+texture = ExtResource("4_hero")
+expand_mode = 1
+stretch_mode = 5
+mouse_filter = 2
+
+[node name="P3" type="TextureRect" parent="TroupeRail/Cards"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+size_flags_vertical = 3
+texture = ExtResource("4_hero")
+expand_mode = 1
+stretch_mode = 5
+mouse_filter = 2
+
+[node name="ActionBar" type="VBoxContainer" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = -138.0
+offset_right = -12.0
+offset_bottom = -16.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_constants/separation = 8
+
+[node name="PrevAction" type="Button" parent="ActionBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Наточить клинок"

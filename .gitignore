@@ -1,0 +1,26 @@
+# --- Godot 4 ---
+.godot/
+
+# --- Сборки / вывод (большое, регенерируется) ---
+/build/
+shot.png
+*.tmp
+
+# --- Android Gradle build template: исходник коммитим, тяжёлое/кэш — нет ---
+# (libs/ содержит движковую .aar >100 МБ — GitHub её не примет; восстанавливается
+#  через Project → Install Android Build Template)
+android/build/build/
+android/build/libs/
+android/build/.gradle/
+android/build/.cxx/
+android/build/assetPackInstallTime/
+android/build/src/main/assets/
+shot.png.import
+
+# --- Исходники-оригиналы арта (не обязательно в репо; раскомментируй чтобы исключить) ---
+# art_in/
+
+# --- OS ---
+Thumbs.db
+.DS_Store
+desktop.ini
