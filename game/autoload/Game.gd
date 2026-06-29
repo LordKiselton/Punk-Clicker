@@ -12,12 +12,14 @@ signal enemy_changed(hp: float, max_hp: float)
 signal enemy_killed
 signal boss_changed(is_boss: bool, time_left: float)
 signal stats_changed   # урон/DPS/стоимости поменялись (обновить UI кнопок)
+signal hero_attacked(id: String, amount: float)   # герой ударил (дискретно)
 
 # --- Стартовая труппа (MVP). Полный список — в LORE.md. ---------------------
+# atk = интервал атаки в секундах (свой ритм у каждого героя)
 const ALLIES := {
-	"knight": {"name": "Рыцарь", "base_dps": 3.0,   "base_cost": 15.0,   "growth": 1.08},
-	"vedma":  {"name": "Ведьма", "base_dps": 18.0,  "base_cost": 150.0,  "growth": 1.10},
-	"jester": {"name": "Шут",    "base_dps": 110.0, "base_cost": 1800.0, "growth": 1.11},
+	"knight": {"name": "Рыцарь", "base_dps": 3.0,   "base_cost": 15.0,   "growth": 1.08, "atk": 0.5},
+	"vedma":  {"name": "Ведьма", "base_dps": 18.0,  "base_cost": 150.0,  "growth": 1.10, "atk": 0.75},
+	"jester": {"name": "Шут",    "base_dps": 110.0, "base_cost": 1800.0, "growth": 1.11, "atk": 1.05},
 }
 const ALLY_ORDER := ["knight", "vedma", "jester"]
 
@@ -36,6 +38,7 @@ var boss_time_left: float = 0.0
 var _save_timer: float = 0.0
 var last_offline_income: float = 0.0   # для окна «Пока тебя не было…»
 var _pending_offline_time: int = 0
+var _atk_timers: Dictionary = {}       # id -> накопленное время до атаки
 
 
 func _ready() -> void:
@@ -173,8 +176,8 @@ func _hit_enemy(amount: float) -> void:
 
 func _on_enemy_killed() -> void:
 	Economy.add_gold(_enemy_gold())
-	enemy_killed.emit()
 	kills_on_stage += 1
+	enemy_killed.emit()   # инкремент ДО сигнала — пипсы доходят до конца
 	if kills_on_stage >= _enemies_needed():
 		_advance_stage()
 	else:
@@ -225,9 +228,17 @@ func buy_ally(id: String) -> bool:
 
 # --- Тик: idle-DPS + таймер босса -------------------------------------------
 func _process(delta: float) -> void:
-	var dps: float = total_dps()
-	if dps > 0.0:
-		_hit_enemy(dps * delta)
+	# Дискретные атаки: каждый герой бьёт в свой ритм (чанк урона + сигнал)
+	for id in ALLY_ORDER:
+		if ally_levels.get(id, 0) <= 0:
+			continue
+		_atk_timers[id] = float(_atk_timers.get(id, 0.0)) + delta
+		var atk: float = ALLIES[id].get("atk", 0.6)
+		if _atk_timers[id] >= atk:
+			_atk_timers[id] -= atk
+			var dmg: float = ally_dps(id) * atk
+			hero_attacked.emit(id, dmg)
+			_hit_enemy(dmg)
 
 	if is_boss and boss_time_left > 0.0:
 		boss_time_left -= delta

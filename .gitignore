@@ -6,6 +6,10 @@
 shot.png
 *.tmp
 
+# --- Временные логи прогона/рендера ---
+*.log
+*.err
+
 # --- Android Gradle build template: исходник коммитим, тяжёлое/кэш — нет ---
 # (libs/ содержит движковую .aar >100 МБ — GitHub её не примет; восстанавливается
 #  через Project → Install Android Build Template)

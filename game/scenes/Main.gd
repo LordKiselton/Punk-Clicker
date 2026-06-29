@@ -24,6 +24,9 @@ const PORTRAIT_BG := Color("#1d1525")
 # Шкала (поменьше, чем была)
 const F_TITLE := 34
 const F_NUM := 32
+const F_RES := 30        # единый размер верхних ресурсов
+const F_BOSS := 42       # крупный текст босса
+const PORTRAIT_H := 150  # фикс. высота портрета героя
 const F_BODY := 26
 const F_SUB := 22
 const F_SMALL := 18
@@ -43,8 +46,12 @@ const ENEMY_TEX_PATHS := {"zombie": "res://art/enemies/zombie.png", "werewolf": 
 const ENEMY_NAMES := {"zombie": "Зомби", "werewolf": "Вервольф"}
 const ALLY_TEX_PATHS := {"knight": "res://art/troupe/knight.png", "vedma": "res://art/troupe/vedma.png", "jester": "res://art/troupe/jester.png"}
 # Закрытые карточки «Скоро» — будущий ростер из LORE.md
-const LOCKED_HEROES := ["Старый Волчатник", "Могильщик", "Гнилой Бунтарь", "Кукловод", "Слепой Гусляр", "Палач", "Дурень-Громобой", "Болтливая Голова", "Вдова-в-Чёрном", "Северный Налётчик", "Шарманщик", "Утопленница", "Звонарь", "Путник в Цилиндре"]
+const LOCKED_HEROES := ["Волчатник", "Могильщик", "Бунтарь", "Кукловод", "Гусляр", "Палач", "Громобой", "Голова", "Вдова", "Налётчик", "Шарманщик", "Утопленница", "Звонарь", "Путник"]
 const LOCATIONS := ["Проклятый Лес", "Погост", "Кривой Трактир", "Старая Усадьба", "Ярмарка-Балаган", "Замок Короля"]
+
+# Шрифты (подбираем): тело — читаемый, заголовочный — стильный под панк-сказку
+const FONT_BODY := "res://fonts/Oswald.ttf"
+const FONT_HEADER := "res://fonts/RuslanDisplay.ttf"
 
 @onready var _arena: Panel = %Arena
 @onready var _bgrect: TextureRect = %BgRect
@@ -78,14 +85,20 @@ var _enemy_tw: Tween = null
 var _shaking: bool = false
 var _enemy_idx: int = 0
 var _hp_ratio: float = 1.0
-var _hp_last_flash: float = 1.0
+var _hp_ghost_ratio: float = 1.0
 var _hp_fill: ColorRect = null
+var _hp_ghost: ColorRect = null
+var _hp_flash: ColorRect = null
+var _hp_flash_tw: Tween = null
 var _hp_text: Label = null
 var _coin_cd: float = 0.0
+var _header_font: Font = null
+var _displayed_gold: float = 0.0
 
 
 func _ready() -> void:
 	_load_textures()
+	_apply_fonts()
 	_apply_styles()
 	if _bg_tex: _bgrect.texture = _bg_tex
 	_update_enemy_visual()
@@ -103,12 +116,14 @@ func _ready() -> void:
 	Game.enemy_killed.connect(_on_enemy_killed)
 	Game.boss_changed.connect(_on_boss_changed)
 	Game.stats_changed.connect(func(): _build_cards(); _refresh())
+	Game.hero_attacked.connect(_on_hero_attacked)
 	Monetization.rewarded_completed.connect(_on_rewarded)
 	Monetization.rewarded_failed.connect(_on_reward_failed)
 
 	_on_enemy_changed(Game.enemy_hp, Game.enemy_max_hp)
 	_on_boss_changed(Game.is_boss, Game.boss_time_left)
 	_set_mult(_buy_mult)
+	_displayed_gold = Economy.gold
 	_refresh()
 	if Game.last_offline_income > 0.0:
 		_show_offline_popup.call_deferred(Game.last_offline_income)
@@ -146,19 +161,33 @@ func _bar_style(p: ProgressBar) -> void:
 	p.add_theme_stylebox_override("fill", _flat(BLOOD, BLOOD, 999, 0, 0))
 
 func _apply_styles() -> void:
-	_lab(_gold_label, F_NUM, GOLD)
-	_lab(_bells_label, F_SUB, Color("#c9a0dc"))
-	_lab(_skulls_label, F_SUB, Color("#cdbfd6"))
+	_lab(_gold_label, F_RES, GOLD)
+	_lab(_bells_label, F_RES, Color("#c9a0dc"))
+	_lab(_skulls_label, F_RES, Color("#cdbfd6"))
 	_lab(_title_label, F_TITLE, GOLD)
-	_lab(_stage_label, F_SUB, MUTED)
-	_lab(_boss_label, F_SUB, BLOOD)
+	_lab(_boss_label, F_BOSS, BLOOD)
+	if is_instance_valid(_stage_label): _stage_label.visible = false   # урон/DPS убрали
+	if is_instance_valid(_boss_bar): _boss_bar.visible = false          # полосу босса убрали
 	_arena.add_theme_stylebox_override("panel", _flat(ARENA, SURF_BORDER, 16, 2, 0))
-	_bar_style(_boss_bar)
 	for s in ["normal", "hover", "pressed", "focus"]:
 		_tap_zone.add_theme_stylebox_override(s, _empty())
 	_reward_btn.add_theme_font_size_override("font_size", F_SUB)
 	_reward_btn.text = "▶ Клад"
 	_style_button(_reward_btn, WOOD, WOOD_BORDER, GOLD)
+	_reward_btn.button_down.connect(_punch.bind(_reward_btn))
+
+
+func _apply_fonts() -> void:
+	var body: Font = load(FONT_BODY) if ResourceLoader.exists(FONT_BODY) else null
+	_header_font = load(FONT_HEADER) if ResourceLoader.exists(FONT_HEADER) else null
+	if body:
+		var th := Theme.new()
+		th.default_font = body
+		theme = th   # тело — на всё дерево по умолчанию
+	if _header_font:
+		for n: Control in [_title_label, _stage_label, _boss_label, _gold_label, _bells_label, _skulls_label]:
+			if is_instance_valid(n):
+				n.add_theme_font_override("font", _header_font)
 
 
 func _load_textures() -> void:
@@ -199,15 +228,19 @@ func _make_card(aid: String) -> Control:
 
 	var card := PanelContainer.new()
 	card.custom_minimum_size = Vector2(150, 0)
-	card.size_flags_vertical = Control.SIZE_FILL
+	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE   # тело пропускает драг к скроллу
 	card.add_theme_stylebox_override("panel", _flat(SURF, color if recruited else SURF_BORDER, 14, 3, 6))
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 5)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_theme_constant_override("separation", 4)
 
 	var pf := Panel.new()
+	pf.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, PORTRAIT_BG, 10, 0, 0))
-	pf.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pf.custom_minimum_size = Vector2(0, PORTRAIT_H)   # фикс. высота — все портреты одинаковые
+	pf.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	pf.clip_contents = true
 	var tr := TextureRect.new()
 	tr.texture = _ally_tex.get(aid)
@@ -222,8 +255,16 @@ func _make_card(aid: String) -> Control:
 
 	var name_l := Label.new()
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_l.autowrap_mode = TextServer.AUTOWRAP_OFF   # имя всегда в одну строку
+	name_l.clip_text = true
 	_lab(name_l, F_SMALL, TXT if recruited else MUTED)
+	name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _header_font: name_l.add_theme_font_override("font", _header_font)
+
+	var level_l := Label.new()
+	level_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(level_l, F_SMALL, color if recruited else MUTED)
+	level_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var cost := Button.new()
 	cost.add_theme_font_size_override("font_size", F_SMALL)
@@ -234,23 +275,28 @@ func _make_card(aid: String) -> Control:
 	cost.pressed.connect(func():
 		if Game.buy_ally_n(aid, _eff_n(Game.ally_max_affordable(aid))):
 			_fly_coins(_global_center(_gold_label), _global_center(cost), 9, GOLD))
+	cost.button_down.connect(_punch.bind(cost))
 
-	vb.add_child(pf); vb.add_child(name_l); vb.add_child(cost)
+	vb.add_child(pf); vb.add_child(name_l); vb.add_child(level_l); vb.add_child(cost)
 	card.add_child(vb)
-	_card_widgets[aid] = {"frame": card, "portrait": tr, "name": name_l, "cost": cost}
+	_card_widgets[aid] = {"frame": card, "portrait": tr, "name": name_l, "level": level_l, "cost": cost}
 	return card
 
 
 func _make_locked_card(hero_name: String) -> Control:
 	var card := PanelContainer.new()
 	card.custom_minimum_size = Vector2(150, 0)
-	card.size_flags_vertical = Control.SIZE_FILL
+	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_theme_stylebox_override("panel", _flat(BG, SURF_BORDER, 14, 2, 6))
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 5)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_theme_constant_override("separation", 4)
 	var pf := Panel.new()
+	pf.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, Color("#3a2b44"), 10, 2, 0))
-	pf.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pf.custom_minimum_size = Vector2(0, PORTRAIT_H)
+	pf.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	pf.clip_contents = true
 	var q := Label.new()
 	q.text = "?"
@@ -259,19 +305,29 @@ func _make_locked_card(hero_name: String) -> Control:
 	q.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	q.add_theme_font_size_override("font_size", 72)
 	q.add_theme_color_override("font_color", Color("#3a2b44"))
+	q.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pf.add_child(q)
 	var name_l := Label.new()
 	name_l.text = hero_name
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	name_l.clip_text = true
+	name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_lab(name_l, F_SMALL, MUTED)
+	if _header_font: name_l.add_theme_font_override("font", _header_font)
+	var lock_l := Label.new()
+	lock_l.text = "—"
+	lock_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lock_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lab(lock_l, F_SMALL, Color("#5a4a66"))
 	var soon := Label.new()
 	soon.text = "Скоро"
 	soon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	soon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	soon.custom_minimum_size = Vector2(0, 56)
+	soon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_lab(soon, F_SMALL, Color("#5a4a66"))
-	vb.add_child(pf); vb.add_child(name_l); vb.add_child(soon)
+	vb.add_child(pf); vb.add_child(name_l); vb.add_child(lock_l); vb.add_child(soon)
 	card.add_child(vb)
 	return card
 
@@ -295,6 +351,7 @@ func _build_action() -> void:
 		b.custom_minimum_size = Vector2(0, 52)
 		b.focus_mode = Control.FOCUS_NONE
 		b.pressed.connect(func(): _set_mult(m))
+		b.button_down.connect(_punch.bind(b))
 		_mult_btns[m] = b
 		mrow.add_child(b)
 	_action_bar.add_child(mrow)
@@ -308,6 +365,7 @@ func _build_action() -> void:
 	_tap_btn.pressed.connect(func():
 		if Game.buy_tap_n(_eff_n(Game.tap_max_affordable())):
 			_fly_coins(_global_center(_gold_label), _global_center(_tap_btn), 9, GOLD))
+	_tap_btn.button_down.connect(_punch.bind(_tap_btn))
 	_action_bar.add_child(_tap_btn)
 
 func _set_mult(m: int) -> void:
@@ -367,10 +425,9 @@ func _on_reward_failed(_p: String) -> void:
 func _on_enemy_changed(hp: float, max_hp: float) -> void:
 	var r: float = clamp(hp / max(1.0, max_hp), 0.0, 1.0)
 	if r >= _hp_ratio:
-		_hp_last_flash = r   # хил / новый враг — без укуса
-	elif _hp_last_flash - r >= 0.02:
-		_spawn_hp_bite(_hp_last_flash, r)   # «укус» по утраченному куску
-		_hp_last_flash = r
+		_hp_ghost_ratio = r   # хил / новый враг — призрак сразу подтягиваем
+	else:
+		_flash_hp()           # удар — короткая вспышка по краю
 	_hp_ratio = r
 	_layout_hp()
 	if _hp_text:
@@ -378,27 +435,19 @@ func _on_enemy_changed(hp: float, max_hp: float) -> void:
 
 func _on_boss_changed(is_boss: bool, time_left: float) -> void:
 	_boss_label.visible = is_boss
+	_pips.visible = not is_boss
 	if is_boss:
-		_boss_label.text = "БОСС! %.0f сек" % max(0.0, time_left)
-		_boss_bar.visible = true
-		_boss_bar.value = clamp(time_left / Balance.BOSS_TIMER_SEC, 0.0, 1.0)
-		_pips.visible = false
-	else:
-		_boss_bar.visible = false
-		_pips.visible = true
+		_boss_label.text = "БОСС · %.0f с" % max(0.0, time_left)
 
 func _refresh() -> void:
-	if _gold_label:
-		_gold_label.text = "%s  +%s/с" % [fmt(Economy.gold), fmt(Game.idle_gold_per_sec())]
+	# золото обновляется в _process (крутящийся счётчик)
 	if _bells_label:
 		_bells_label.text = "♪ %d" % Economy.bells
 	if _skulls_label:
 		_skulls_label.text = "☠ %d" % Economy.skulls
 	if _title_label:
 		var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
-		_title_label.text = "%s · стадия %d" % [loc, Game.stage]
-	if _stage_label:
-		_stage_label.text = "урон/тап %s   ·   DPS %s" % [fmt(Game.tap_damage()), fmt(Game.total_dps())]
+		_title_label.text = "%s · %d" % [loc, Game.stage]
 
 	# карточки героев
 	for aid in _card_widgets:
@@ -409,7 +458,8 @@ func _refresh() -> void:
 		var lvl: int = Game.ally_levels.get(aid, 0)
 		var n: int = _eff_n(Game.ally_max_affordable(aid))
 		var cost: float = Game.ally_cost_n(aid, max(1, n))
-		w.name.text = "%s · ур.%d" % [def.name, lvl] if lvl > 0 else def.name
+		w.name.text = def.name
+		w.level.text = "ур. %d" % lvl if lvl > 0 else "не нанят"
 		w.cost.text = ("×%d\n%s" % [max(1, n), fmt(cost)]) if lvl > 0 else ("Нанять\n%s" % fmt(cost))
 		w.cost.disabled = Economy.gold < cost
 
@@ -424,18 +474,24 @@ func _refresh() -> void:
 func _process(delta: float) -> void:
 	if _coin_cd > 0.0:
 		_coin_cd -= delta
-	if Game.total_dps() <= 0.0:
-		return
-	_passive_timer += delta
-	if _passive_timer >= 0.5:
-		var elapsed := _passive_timer
-		_passive_timer = 0.0
-		for i in Game.ALLY_ORDER.size():
-			var id: String = Game.ALLY_ORDER[i]
-			var d := Game.ally_dps(id) * elapsed
-			if d <= 0.0:
-				continue
-			_float_burst(fmt(d), F_PASSIVE, ALLY_COLORS.get(id, GREEN))
+	# Призрак урона плавно догоняет реальную полосу (пропорционально — без «ползучести»)
+	if _hp_ghost_ratio > _hp_ratio + 0.0005:
+		_hp_ghost_ratio = max(_hp_ratio, lerp(_hp_ghost_ratio, _hp_ratio, clampf(delta * 6.0, 0.0, 1.0)))
+		_layout_hp()
+	elif _hp_ghost_ratio != _hp_ratio:
+		_hp_ghost_ratio = _hp_ratio
+		_layout_hp()
+	# Крутящийся счётчик золота: цифры быстро перематываются к реальному значению
+	if is_instance_valid(_gold_label):
+		_displayed_gold = lerp(_displayed_gold, Economy.gold, clampf(delta * 7.0, 0.0, 1.0))
+		if abs(_displayed_gold - Economy.gold) < 1.0:
+			_displayed_gold = Economy.gold
+		_gold_label.text = "%s  +%s/с" % [fmt(_displayed_gold), fmt(Game.idle_gold_per_sec())]
+
+
+# Герой ударил — цифра его цветом вылетает из врага
+func _on_hero_attacked(id: String, amount: float) -> void:
+	_float_burst(fmt(amount), F_PASSIVE, ALLY_COLORS.get(id, GREEN))
 
 
 # --- Juice -------------------------------------------------------------------
@@ -528,10 +584,18 @@ func _build_hpbar() -> void:
 	if not is_instance_valid(_hpbar):
 		return
 	_hpbar.add_theme_stylebox_override("panel", _flat(DARK, SURF_BORDER, 10, 2, 0))
+	_hp_ghost = ColorRect.new()
+	_hp_ghost.color = Color("#e8956a")   # светлый «призрак» урона (плавно догоняет)
+	_hp_ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hpbar.add_child(_hp_ghost)
 	_hp_fill = ColorRect.new()
 	_hp_fill.color = BLOOD
 	_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hpbar.add_child(_hp_fill)
+	_hp_flash = ColorRect.new()
+	_hp_flash.color = Color(1, 1, 1, 0.0)   # белая вспышка на удар
+	_hp_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hpbar.add_child(_hp_flash)
 	_hp_text = Label.new()
 	_hp_text.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_hp_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -542,6 +606,7 @@ func _build_hpbar() -> void:
 	_hp_text.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
 	_hp_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hp_text.z_index = 5   # текст поверх «укусов»
+	if _header_font: _hp_text.add_theme_font_override("font", _header_font)
 	_hpbar.add_child(_hp_text)
 	_hpbar.resized.connect(_layout_hp)
 	_layout_hp()
@@ -552,26 +617,25 @@ func _layout_hp() -> void:
 	var pad := 4.0
 	var w: float = max(0.0, _hpbar.size.x - pad * 2.0)
 	var h: float = max(0.0, _hpbar.size.y - pad * 2.0)
+	if is_instance_valid(_hp_ghost):
+		_hp_ghost.position = Vector2(pad, pad)
+		_hp_ghost.size = Vector2(w * _hp_ghost_ratio, h)
 	if is_instance_valid(_hp_fill):
 		_hp_fill.position = Vector2(pad, pad)
 		_hp_fill.size = Vector2(w * _hp_ratio, h)
+	if is_instance_valid(_hp_flash):
+		_hp_flash.position = Vector2(pad, pad)
+		_hp_flash.size = Vector2(w * _hp_ratio, h)
 
-# «Укус» — светлый кусок на отъеденной части HP, быстро гаснет
-func _spawn_hp_bite(from_r: float, to_r: float) -> void:
-	if not is_instance_valid(_hpbar):
+# Короткая белая вспышка по текущему краю полосы — «удар»
+func _flash_hp() -> void:
+	if not is_instance_valid(_hp_flash):
 		return
-	var pad := 4.0
-	var w: float = max(0.0, _hpbar.size.x - pad * 2.0)
-	var h: float = max(0.0, _hpbar.size.y - pad * 2.0)
-	var bite := ColorRect.new()
-	bite.color = Color(1, 1, 1, 0.85)
-	bite.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bite.position = Vector2(pad + w * to_r, pad)
-	bite.size = Vector2(w * (from_r - to_r), h)
-	_hpbar.add_child(bite)
-	var tw := create_tween()
-	tw.tween_property(bite, "modulate:a", 0.0, 0.22).set_ease(Tween.EASE_IN)
-	tw.tween_callback(bite.queue_free)
+	if _hp_flash_tw and _hp_flash_tw.is_valid():
+		_hp_flash_tw.kill()
+	_hp_flash.color = Color(1, 1, 1, 0.4)
+	_hp_flash_tw = create_tween()
+	_hp_flash_tw.tween_property(_hp_flash, "color:a", 0.0, 0.16).set_ease(Tween.EASE_IN)
 
 
 # --- Полёт монет (поверх всего экрана, по дуге) ------------------------------
@@ -640,6 +704,16 @@ func _show_offline_popup(amount: float) -> void:
 		dim.queue_free())
 	vb.add_child(t); vb.add_child(a); vb.add_child(ok)
 	panel.add_child(vb)
+
+
+# Отклик кнопки на нажатие — быстрый «панч» масштаба
+func _punch(n: Control) -> void:
+	if not is_instance_valid(n):
+		return
+	n.pivot_offset = n.size * 0.5
+	var tw := create_tween()
+	tw.tween_property(n, "scale", Vector2(0.9, 0.9), 0.05)
+	tw.tween_property(n, "scale", Vector2.ONE, 0.13).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 const _UNITS := ["", "K", "M", "B", "T", "aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai", "aj", "ak", "al", "am", "an", "ao", "ap", "aq", "ar", "as", "at", "au", "av", "aw", "ax", "ay", "az"]
