@@ -13,7 +13,7 @@ func _ready() -> void:
 		Game.buy_ally_n(aid, 3)
 
 	var sv := SubViewport.new()
-	sv.size = Vector2i(720, 1280)
+	sv.size = Vector2i(720, 1600)
 	sv.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	sv.transparent_bg = false
 	add_child(sv)
