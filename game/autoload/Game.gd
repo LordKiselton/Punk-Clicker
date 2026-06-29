@@ -11,6 +11,8 @@ signal stage_changed(stage: int, location: int)
 signal enemy_changed(hp: float, max_hp: float)
 signal enemy_killed
 signal boss_changed(is_boss: bool, time_left: float)
+signal boss_won                # босс убит в срок
+signal boss_failed             # таймер истёк — ждём решение игрока (реклама/сдаться)
 signal stats_changed   # урон/DPS/стоимости поменялись (обновить UI кнопок)
 signal hero_attacked(id: String, amount: float)   # герой ударил (дискретно)
 signal punk_charge_changed(ratio: float)           # заряд панк-рока 0..1
@@ -36,6 +38,7 @@ var enemy_hp: float = 0.0
 var enemy_max_hp: float = 0.0
 var is_boss: bool = false
 var boss_time_left: float = 0.0
+var boss_pending_fail: bool = false   # таймер в 0, ждём решения (не откатываем сразу)
 
 var _save_timer: float = 0.0
 var last_offline_income: float = 0.0   # для окна «Пока тебя не было…»
@@ -191,6 +194,7 @@ func _enemies_needed() -> int:
 	return 1 if is_boss else Balance.ENEMIES_PER_STAGE
 
 func _spawn_enemy() -> void:
+	boss_pending_fail = false
 	is_boss = (stage % Balance.BOSS_EVERY == 0)
 	var base_hp: float = Balance.ENEMY_HP_BASE * pow(Balance.ENEMY_HP_GROWTH, stage - 1)
 	enemy_max_hp = base_hp * (Balance.BOSS_HP_MULT if is_boss else 1.0)
@@ -213,11 +217,14 @@ func _hit_enemy(amount: float) -> void:
 		enemy_changed.emit(enemy_hp, enemy_max_hp)
 
 func _on_enemy_killed() -> void:
+	var was_boss: bool = is_boss
 	Economy.add_gold(_enemy_gold())
 	kills_on_stage += 1
 	enemy_killed.emit()   # инкремент ДО сигнала — пипсы доходят до конца
 	if kills_on_stage >= _enemies_needed():
 		_advance_stage()
+		if was_boss:
+			boss_won.emit()   # босс повержен в срок
 	else:
 		_spawn_enemy()
 
@@ -227,6 +234,19 @@ func _advance_stage() -> void:
 	max_stage = max(max_stage, stage)
 	stage_changed.emit(stage, location())
 	_spawn_enemy()
+
+# Второй шанс: реклама дала ещё времени (HP босса сохраняется)
+func boss_grant_time(sec: float) -> void:
+	if not is_boss:
+		return
+	boss_pending_fail = false
+	boss_time_left = sec
+	boss_changed.emit(true, boss_time_left)
+
+# Игрок сдался (или реклама не вышла) — откат на стадию
+func boss_give_up() -> void:
+	boss_pending_fail = false
+	_retreat_stage()
 
 func _retreat_stage() -> void:
 	# босс не побеждён вовремя — откат на 1 стадию (не ниже начала локации)
@@ -290,11 +310,15 @@ func _process(delta: float) -> void:
 			hero_attacked.emit(id, dmg)
 			_hit_enemy(dmg)
 
-	if is_boss and boss_time_left > 0.0:
+	if is_boss and not boss_pending_fail and boss_time_left > 0.0:
 		boss_time_left -= delta
-		boss_changed.emit(true, boss_time_left)
 		if boss_time_left <= 0.0:
-			_retreat_stage()
+			boss_time_left = 0.0
+			boss_pending_fail = true        # не откатываем сразу — ждём решение игрока
+			boss_changed.emit(true, 0.0)
+			boss_failed.emit()
+		else:
+			boss_changed.emit(true, boss_time_left)
 
 	_save_timer += delta
 	if _save_timer >= Balance.AUTOSAVE_INTERVAL_SEC:

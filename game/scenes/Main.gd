@@ -117,6 +117,11 @@ var _settings_panel: Control = null
 var _reset_armed: bool = false
 var _reset_btn: Button = null
 
+# --- Босс: телеграф / победа / поражение -------------------------------------
+var _boss_layer: CanvasLayer = null
+var _boss_prev_is_boss: bool = false
+var _boss_offer: Control = null
+
 # --- ПОЛНЫЙ ПАНК-РОК (UI + VFX + микрофон) ----------------------------------
 const PUNK_LISTEN_SEC := 3.0          # окно прослушки крика «ХОЙ»
 const PUNK_HOLD_SEC := 5.0            # удержание для запуска БЕЗ крика (фолбэк)
@@ -177,12 +182,15 @@ func _ready() -> void:
 	_setup_music()
 	_build_settings()
 	_apply_settings()
+	_build_boss_ui()
 
 	Economy.gold_changed.connect(func(_v): _refresh())
 	Game.stage_changed.connect(func(_s, _l): _refresh_pips(); _refresh())
 	Game.enemy_changed.connect(_on_enemy_changed)
 	Game.enemy_killed.connect(_on_enemy_killed)
 	Game.boss_changed.connect(_on_boss_changed)
+	Game.boss_won.connect(_on_boss_won)
+	Game.boss_failed.connect(_on_boss_failed)
 	Game.stats_changed.connect(func(): _refresh())   # карточки обновляем, не пересоздаём (живая анимация)
 	Game.hero_attacked.connect(_on_hero_attacked)
 	Game.punk_charge_changed.connect(_on_punk_charge)
@@ -489,9 +497,15 @@ func _on_rewarded(placement: String) -> void:
 		Economy.add_gold(Game.rewarded_gold_bonus())
 		if _reward_btn:
 			_fly_coins(_global_center(_reward_btn), _global_center(_gold_label), 16, GOLD)
+	elif placement == "boss_time":
+		get_tree().paused = false
+		Game.boss_grant_time(15.0)   # +15 секунд, бой продолжается
 	if _reward_btn: _reward_btn.disabled = false
 
-func _on_reward_failed(_p: String) -> void:
+func _on_reward_failed(p: String) -> void:
+	if p == "boss_time":
+		get_tree().paused = false
+		_apply_boss_loss()           # реклама не вышла — засчитываем поражение
 	if _reward_btn: _reward_btn.disabled = false
 
 
@@ -803,6 +817,9 @@ func _on_enemy_changed(hp: float, max_hp: float) -> void:
 		_hp_text.text = "%s · %s / %s" % [ENEMY_NAMES.get(_current_enemy_id(), "Нечисть"), fmt(max(0.0, hp)), fmt(max_hp)]
 
 func _on_boss_changed(is_boss: bool, time_left: float) -> void:
+	if is_boss and not _boss_prev_is_boss:
+		_boss_telegraph()                 # босс появился — телеграф
+	_boss_prev_is_boss = is_boss
 	_boss_label.visible = is_boss
 	_pips.visible = not is_boss
 	if is_boss:
@@ -958,6 +975,163 @@ func _process_parallax(delta: float) -> void:
 	_enemy_parallax = target * ENEMY_PARALLAX_FACTOR
 	if is_instance_valid(_enemy) and _enemy_home_set:
 		_enemy.position = _enemy_home + _enemy_shake_off + _enemy_parallax
+
+# --- Босс: телеграф / победа / поражение -------------------------------------
+func _build_boss_ui() -> void:
+	_boss_layer = CanvasLayer.new()
+	_boss_layer.layer = 55
+	_boss_layer.process_mode = Node.PROCESS_MODE_ALWAYS   # работает в паузе/слоумо
+	add_child(_boss_layer)
+
+func _boss_telegraph() -> void:
+	if not is_instance_valid(_boss_layer):
+		return
+	var flash := ColorRect.new()
+	flash.color = Color(BLOOD.r, BLOOD.g, BLOOD.b, 0.45)
+	flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_boss_layer.add_child(flash)
+	var ft := create_tween()
+	ft.tween_property(flash, "color:a", 0.0, 0.7)
+	ft.tween_callback(flash.queue_free)
+	var l := Label.new()
+	l.text = "БОСС!"
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", 130)
+	l.add_theme_color_override("font_color", BLOOD)
+	l.add_theme_constant_override("outline_size", 14)
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	if _header_font: l.add_theme_font_override("font", _header_font)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.set_pivot_offset(get_viewport().get_visible_rect().size * 0.5)
+	l.scale = Vector2(1.8, 1.8)
+	l.modulate.a = 0.0
+	_boss_layer.add_child(l)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(l, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "modulate:a", 1.0, 0.12)
+	tw.set_parallel(false)
+	tw.tween_interval(1.0)
+	tw.tween_property(l, "modulate:a", 0.0, 0.45)
+	tw.tween_callback(l.queue_free)
+
+# Слоумо-битдаун + крупный баннер (победа/поражение)
+func _boss_beat(title: String, subtitle: String, col: Color) -> void:
+	if not is_instance_valid(_boss_layer):
+		return
+	Engine.time_scale = 0.35
+	var holder := Control.new()
+	holder.set_anchors_preset(Control.PRESET_FULL_RECT)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_boss_layer.add_child(holder)
+	var vb := VBoxContainer.new()
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 6)
+	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(vb)
+	var t := Label.new()
+	t.text = title
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_font_size_override("font_size", 66)
+	t.add_theme_color_override("font_color", col)
+	t.add_theme_constant_override("outline_size", 12)
+	t.add_theme_color_override("font_outline_color", Color.BLACK)
+	if _header_font: t.add_theme_font_override("font", _header_font)
+	vb.add_child(t)
+	var s := Label.new()
+	s.text = subtitle
+	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(s, F_SUB, TXT)
+	if _header_font: s.add_theme_font_override("font", _header_font)
+	vb.add_child(s)
+	holder.set_pivot_offset(get_viewport().get_visible_rect().size * 0.5)
+	holder.scale = Vector2(0.82, 0.82)
+	holder.modulate.a = 0.0
+	var tw := create_tween()
+	tw.set_ignore_time_scale(true)
+	tw.set_parallel(true)
+	tw.tween_property(holder, "modulate:a", 1.0, 0.18)
+	tw.tween_property(holder, "scale", Vector2.ONE, 0.26).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.set_parallel(false)
+	tw.tween_interval(1.2)
+	tw.tween_property(holder, "modulate:a", 0.0, 0.45)
+	tw.tween_callback(holder.queue_free)
+	await get_tree().create_timer(1.7, true, false, true).timeout
+	Engine.time_scale = 1.0
+
+func _on_boss_won() -> void:
+	var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
+	_fly_coins(_global_center(_enemy), _global_center(_gold_label), 20, GOLD)
+	_boss_beat("БОСС ПОВЕРЖЕН!", "→ %s · стадия %d" % [loc, Game.stage], GOLD)
+
+func _on_boss_failed() -> void:
+	get_tree().paused = true
+	_show_boss_offer()
+
+func _show_boss_offer() -> void:
+	if not is_instance_valid(_boss_layer):
+		return
+	_close_boss_offer()
+	_boss_offer = Control.new()
+	_boss_offer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_boss_layer.add_child(_boss_offer)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.65)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_boss_offer.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_boss_offer.add_child(cc)
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _flat(DARK, BLOOD, 20, 2, 26))
+	box.custom_minimum_size = Vector2(560, 0)
+	cc.add_child(box)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 14)
+	box.add_child(vb)
+	var t := Label.new()
+	t.text = "НЕ УСПЕЛ!"
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(t, F_BOSS, BLOOD)
+	if _header_font: t.add_theme_font_override("font", _header_font)
+	vb.add_child(t)
+	var s := Label.new()
+	s.text = "Босс устоял. Дать ещё 15 секунд?"
+	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	s.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(s, F_BODY, TXT)
+	vb.add_child(s)
+	var watch := _settings_button("▶ Смотреть ролик (+15с)", WOOD, true)
+	watch.pressed.connect(_boss_watch_ad)
+	vb.add_child(watch)
+	var quit := _settings_button("Сдаться", SURF, false)
+	quit.pressed.connect(_boss_give_up_pressed)
+	vb.add_child(quit)
+
+func _close_boss_offer() -> void:
+	if is_instance_valid(_boss_offer):
+		_boss_offer.queue_free()
+	_boss_offer = null
+
+func _boss_watch_ad() -> void:
+	_close_boss_offer()
+	Monetization.show_rewarded("boss_time")   # на наградах → +15с / поражение
+
+func _boss_give_up_pressed() -> void:
+	_close_boss_offer()
+	get_tree().paused = false
+	_apply_boss_loss()
+
+func _apply_boss_loss() -> void:
+	Game.boss_give_up()   # откат на стадию
+	var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
+	_boss_beat("БОСС УСТОЯЛ", "← откат: %s · стадия %d" % [loc, Game.stage], BLOOD)
+
 
 # --- Интро: элементы плавно проявляются и подъезжают --------------------------
 func _intro() -> void:
