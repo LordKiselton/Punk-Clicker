@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c5nrmoygnqbu1"
-path="res://.godot/imported/vedma.png-cc7add1fd96716811e6621cdaf80fade.ctex"
+uid="uid://cpq8pdyfrw63r"
+path="res://.godot/imported/city.png-3dcfdb64bbdac9e444024bc2a4c80555.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://art/troupe/vedma.png"
-dest_files=["res://.godot/imported/vedma.png-cc7add1fd96716811e6621cdaf80fade.ctex"]
+source_file="res://art/bg/city.png"
+dest_files=["res://.godot/imported/city.png-3dcfdb64bbdac9e444024bc2a4c80555.ctex"]
 
 [params]
 
