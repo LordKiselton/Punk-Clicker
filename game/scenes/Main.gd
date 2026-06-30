@@ -35,19 +35,50 @@ const F_CRIT := 56
 const F_PASSIVE := 28
 
 const ALLY_COLORS := {
-	"knight": Color("#7fa6d0"),   # Рыцарь — стальной голубой
-	"vedma": Color("#6f9f5a"),    # Ведьма — зелёный
-	"jester": Color("#d4453f"),   # Шут — кровавый красный
+	"knight": Color("#8fa3b3"),       # Рыцарь — сталь
+	"ratrogue": Color("#93785a"),     # Крыс-Плут — бурый
+	"bard": Color("#c8527a"),         # Бард — панк-маджента
+	"blacksmith": Color("#c0703a"),   # Кузнец — ржавая медь
+	"alchemist": Color("#7fae4a"),    # Алхимик — кислотно-зелёный
+	"hunter": Color("#7f8769"),       # Охотник — оливковый
+	"witch": Color("#8a5fa0"),        # Ведьма — пурпур
+	"jester": Color("#d4453f"),       # Шут — кровавый красный
+	"berserker": Color("#8a8276"),    # Берсерк — волчий серый
+	"necromancer": Color("#4f8f7a"),  # Некромант — бирюза
 }
 const MULTS := [1, 10, 100, -1]
 
-const BG_TEX_PATH := "res://art/bg/forest.png"
-const ENEMY_TEX_PATHS := {"zombie": "res://art/enemies/zombie.png", "werewolf": "res://art/enemies/werewolf.png"}
-const ENEMY_NAMES := {"zombie": "Зомби", "werewolf": "Вервольф"}
-const ALLY_TEX_PATHS := {"knight": "res://art/troupe/knight.png", "vedma": "res://art/troupe/vedma.png", "jester": "res://art/troupe/jester.png"}
-# Закрытые карточки «Скоро» — будущий ростер из LORE.md
-const LOCKED_HEROES := ["Волчатник", "Могильщик", "Бунтарь", "Кукловод", "Гусляр", "Палач", "Громобой", "Голова", "Вдова", "Налётчик", "Шарманщик", "Утопленница", "Звонарь", "Путник"]
-const LOCATIONS := ["Проклятый Лес", "Погост", "Кривой Трактир", "Старая Усадьба", "Ярмарка-Балаган", "Замок Короля"]
+# Локации (порядок прохождения) + их фоны
+const LOCATIONS := ["Проклятый Лес", "Погост", "Кривой Трактир", "Каменный Город", "Замок Короля"]
+const LOC_BG_PATHS := ["res://art/bg/forest.png", "res://art/bg/graveyard.png", "res://art/bg/tavern.png", "res://art/bg/city.png", "res://art/bg/castle.png"]
+const BG_TEX_PATH := "res://art/bg/forest.png"   # фолбэк
+
+# Враги по локациям: первые 3 — ключевые (дом), далее 2 «гостя» из соседних.
+# Мягкий стаггер: ключевые с начала, гости подключаются быстро. Босс — всегда ключевой.
+const LOCATION_ENEMIES := [
+	["werewolf", "faerie", "shroom", "troll", "zombie"],         # Лес
+	["zombie", "skeleton", "emoghost", "werewolf", "banshee"],   # Погост
+	["orkgang", "orkskinhead", "troll", "ratgangster", "dwarf"], # Трактир
+	["ratgangster", "orkrapper", "banshee", "orkskinhead", "vampire"], # Город
+	["vampire", "techno", "dwarf", "skeleton", "emoghost"],      # Замок
+]
+const ENEMY_NAMES := {
+	"zombie": "Зомби", "werewolf": "Вервольф", "faerie": "Фея", "shroom": "Гриб-Байкер",
+	"skeleton": "Скелет-Барабанщик", "emoghost": "Эмо-Призрак",
+	"orkgang": "Орк-Гопник", "orkskinhead": "Орк-Скинхед", "troll": "Тролль-Кузнец",
+	"ratgangster": "Крыса-Гангстер", "orkrapper": "Орк-Рэпер", "banshee": "Банши-Стримерша",
+	"vampire": "Вампир-Цирюльник", "techno": "Техно-Некромант", "dwarf": "Гном-Кузнец",
+}
+const ENEMY_TEX_DIR := "res://art/enemies/"
+const ALLY_TEX_PATHS := {
+	"knight": "res://art/troupe/knight.png", "ratrogue": "res://art/troupe/ratrogue.png",
+	"bard": "res://art/troupe/bard.png", "blacksmith": "res://art/troupe/blacksmith.png",
+	"alchemist": "res://art/troupe/alchemist.png", "hunter": "res://art/troupe/hunter.png",
+	"witch": "res://art/troupe/witch.png", "jester": "res://art/troupe/jester.png",
+	"berserker": "res://art/troupe/berserker.png", "necromancer": "res://art/troupe/necromancer.png",
+}
+# Закрытые карточки «Скоро» — тизер следующего ростера
+const LOCKED_HEROES := ["Утопленница", "Путник"]
 
 # Шрифты (подбираем): тело — читаемый, заголовочный — стильный под панк-сказку
 const FONT_BODY := "res://fonts/Oswald.ttf"
@@ -75,6 +106,8 @@ const FONT_HEADER := "res://fonts/RuslanDisplay.ttf"
 
 var _bg_tex: Texture2D = null
 var _enemy_textures: Dictionary = {}
+var _loc_bg: Dictionary = {}            # индекс локации -> фон
+var _current_enemy: String = ""         # id текущего врага (выбран при спавне)
 var _ally_tex: Dictionary = {}
 var _buy_mult: int = 1
 var _passive_timer: float = 0.0
@@ -121,6 +154,30 @@ var _reset_btn: Button = null
 var _boss_layer: CanvasLayer = null
 var _boss_prev_is_boss: bool = false
 var _boss_offer: Control = null
+
+# --- Prestige UI -------------------------------------------------------------
+var _prestige_btn: Button = null
+var _prestige_layer: CanvasLayer = null
+var _prestige_panel: Control = null
+var _prestige_pending_lbl: Label = null
+var _prestige_summary_lbl: Label = null
+var _prestige_bells_lbl: Label = null
+var _prestige_confirm: Button = null
+var _prestige_rows: Dictionary = {}    # id -> {level, btn, row}
+var _prestige_intro_seen: bool = false
+
+# --- Туториал первой сессии --------------------------------------------------
+var _tut_done: bool = false
+var _tut_step: int = -1                 # -1 неактивен; 0..3 шаги
+var _tut_layer: CanvasLayer = null
+var _tut_rect: ColorRect = null         # затемнение + прожектор (шейдер)
+var _tut_mat: ShaderMaterial = null
+var _tut_bubble: Control = null
+var _tut_lead: Label = null
+var _tut_text: Label = null
+var _tut_taps: int = 0                  # счётчик тапов для шага 1
+var _tut_pulse_t: float = 0.0
+var _tut_shown: bool = false            # коачмарк сейчас показан (precond выполнен)
 
 # --- ПОЛНЫЙ ПАНК-РОК (UI + VFX + микрофон) ----------------------------------
 const PUNK_LISTEN_SEC := 3.0          # окно прослушки крика «ХОЙ»
@@ -183,6 +240,8 @@ func _ready() -> void:
 	_build_settings()
 	_apply_settings()
 	_build_boss_ui()
+	_build_prestige()
+	_build_tutorial()
 
 	Economy.gold_changed.connect(func(_v): _refresh())
 	Game.stage_changed.connect(func(_s, _l): _refresh_pips(); _refresh())
@@ -191,6 +250,8 @@ func _ready() -> void:
 	Game.boss_changed.connect(_on_boss_changed)
 	Game.boss_won.connect(_on_boss_won)
 	Game.boss_failed.connect(_on_boss_failed)
+	Game.prestige_changed.connect(_refresh_prestige)
+	Economy.bells_changed.connect(func(_v): _refresh_prestige())
 	Game.stats_changed.connect(func(): _refresh())   # карточки обновляем, не пересоздаём (живая анимация)
 	Game.hero_attacked.connect(_on_hero_attacked)
 	Game.punk_charge_changed.connect(_on_punk_charge)
@@ -206,6 +267,8 @@ func _ready() -> void:
 	_intro()
 	if Game.last_offline_income > 0.0:
 		_show_offline_popup.call_deferred(Game.last_offline_income)
+	if not _tut_done:
+		_start_tutorial.call_deferred()   # первый запуск — обучение
 
 
 # --- Стиль -------------------------------------------------------------------
@@ -274,21 +337,50 @@ func _apply_fonts() -> void:
 func _load_textures() -> void:
 	if ResourceLoader.exists(BG_TEX_PATH):
 		_bg_tex = load(BG_TEX_PATH)
-	for k in ENEMY_TEX_PATHS:
-		if ResourceLoader.exists(ENEMY_TEX_PATHS[k]):
-			_enemy_textures[k] = load(ENEMY_TEX_PATHS[k])
+	for i in LOC_BG_PATHS.size():
+		if ResourceLoader.exists(LOC_BG_PATHS[i]):
+			_loc_bg[i] = load(LOC_BG_PATHS[i])
+	for k in ENEMY_NAMES:
+		var p: String = ENEMY_TEX_DIR + k + ".png"
+		if ResourceLoader.exists(p):
+			_enemy_textures[k] = load(p)
 	for aid in ALLY_TEX_PATHS:
 		if ResourceLoader.exists(ALLY_TEX_PATHS[aid]):
 			_ally_tex[aid] = load(ALLY_TEX_PATHS[aid])
 
 
+# Выбор врага: пул локации, мягкий стаггер, без повтора подряд, босс = ключевой
+func _pick_enemy() -> String:
+	var li: int = (Game.location() - 1) % LOCATION_ENEMIES.size()
+	var pool: Array = LOCATION_ENEMIES[li]
+	if pool.is_empty():
+		return "zombie"
+	var cands: Array
+	if Game.is_boss:
+		cands = pool.slice(0, mini(3, pool.size()))   # босс — один из ключевых (дом)
+	else:
+		var sil: int = (Game.stage - 1) % Balance.STAGES_PER_LOCATION
+		var unlocked: int = clampi(3 + int(sil / 8), 3, pool.size())   # мягкий стаггер: 3 → 5 к ~16 стадии
+		cands = pool.slice(0, unlocked)
+	# не повторять одного и того же подряд
+	var fresh: Array = []
+	for e in cands:
+		if e != _current_enemy:
+			fresh.append(e)
+	if fresh.is_empty():
+		fresh = cands
+	return fresh[randi() % fresh.size()]
+
 func _current_enemy_id() -> String:
-	return "werewolf" if (_enemy_idx % 2 == 1) else "zombie"
+	return _current_enemy if _current_enemy != "" else "zombie"
 
 func _update_enemy_visual() -> void:
-	var id := _current_enemy_id()
-	if _enemy_textures.has(id):
-		_enemy.texture = _enemy_textures[id]
+	_current_enemy = _pick_enemy()
+	if _enemy_textures.has(_current_enemy):
+		_enemy.texture = _enemy_textures[_current_enemy]
+	var li: int = (Game.location() - 1) % LOC_BG_PATHS.size()
+	if _loc_bg.has(li) and is_instance_valid(_bgrect):
+		_bgrect.texture = _loc_bg[li]
 
 
 # --- Рельс карточек героев ---------------------------------------------------
@@ -333,6 +425,17 @@ func _make_card(aid: String) -> Control:
 	if not recruited:
 		tr.modulate = Color(0.22, 0.20, 0.28, 1.0)   # силуэт «ещё не собран»
 	pf.add_child(tr)
+	if tr.texture == null:
+		# арт ещё не нарисован — плейсхолдер «?» в цвете героя
+		var ph := Label.new()
+		ph.text = "?"
+		ph.set_anchors_preset(Control.PRESET_FULL_RECT)
+		ph.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		ph.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		ph.add_theme_font_size_override("font_size", 72)
+		ph.add_theme_color_override("font_color", color if recruited else Color(0.34, 0.30, 0.40))
+		ph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pf.add_child(ph)
 
 	var name_l := Label.new()
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -487,6 +590,8 @@ func _on_tap() -> void:
 	_flash_enemy()
 	if res.crit:
 		_shake_enemy()
+	if _tut_step == 0:
+		_tut_taps += 1
 
 func _on_reward_pressed() -> void:
 	if _reward_btn: _reward_btn.disabled = true
@@ -865,6 +970,9 @@ func _refresh() -> void:
 		_tap_btn.text = "Наточить клинок ×%d   —   %s" % [max(1, tn), fmt(Game.tap_cost_n(max(1, tn)))]
 		_tap_btn.disabled = Economy.gold < Game.tap_cost_n(max(1, tn))
 
+	_refresh_prestige()
+	_maybe_prestige_intro()
+
 
 # --- Пассивный урон ----------------------------------------------------------
 func _process(delta: float) -> void:
@@ -888,6 +996,7 @@ func _process(delta: float) -> void:
 
 	_process_punk(delta)
 	_process_parallax(delta)
+	_process_tutorial(delta)
 
 
 # Логика панк-рока: удержание (фолбэк), окно прослушки крика, плавность эффекта
@@ -1133,6 +1242,437 @@ func _apply_boss_loss() -> void:
 	_boss_beat("БОСС УСТОЯЛ", "← откат: %s · стадия %d" % [loc, Game.stage], BLOOD)
 
 
+# --- Prestige UI «Новая сказка» ----------------------------------------------
+func _build_prestige() -> void:
+	_prestige_btn = Button.new()
+	_prestige_btn.focus_mode = Control.FOCUS_NONE
+	_prestige_btn.add_theme_font_size_override("font_size", F_SMALL)
+	_prestige_btn.custom_minimum_size = Vector2(0, 42)
+	_prestige_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_style_button(_prestige_btn, WOOD, WOOD_BORDER, GOLD)
+	_prestige_btn.text = "✦ Сказания"
+	_prestige_btn.pressed.connect(_open_prestige)
+	var rc := get_node_or_null("%RightCol")
+	if rc:
+		rc.add_child(_prestige_btn)
+		rc.move_child(_prestige_btn, 0)   # Сказания сверху, ⚙ под ней
+	_build_prestige_panel()
+	_refresh_prestige()
+
+func _build_prestige_panel() -> void:
+	_prestige_layer = CanvasLayer.new()
+	_prestige_layer.layer = 58
+	_prestige_layer.process_mode = Node.PROCESS_MODE_ALWAYS   # работает в паузе
+	add_child(_prestige_layer)
+	_prestige_panel = Control.new()
+	_prestige_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_prestige_panel.visible = false
+	_prestige_layer.add_child(_prestige_panel)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.7)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and e.pressed:
+			_close_prestige())
+	_prestige_panel.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prestige_panel.add_child(cc)
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 20, 2, 24))
+	box.custom_minimum_size = Vector2(640, 0)
+	cc.add_child(box)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	box.add_child(vb)
+
+	var title := Label.new()
+	title.text = "Новая сказка"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(title, F_TITLE, GOLD)
+	if _header_font: title.add_theme_font_override("font", _header_font)
+	vb.add_child(title)
+
+	_prestige_bells_lbl = Label.new()
+	_prestige_bells_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(_prestige_bells_lbl, F_TITLE, Color("#c9a0dc"))
+	if _header_font: _prestige_bells_lbl.add_theme_font_override("font", _header_font)
+	vb.add_child(_prestige_bells_lbl)
+
+	_prestige_pending_lbl = Label.new()
+	_prestige_pending_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(_prestige_pending_lbl, F_SMALL, MUTED)
+	vb.add_child(_prestige_pending_lbl)
+
+	var keep := Label.new()
+	keep.text = "Заберёшь: бубенцы, дерево, черепа.\nНачнёшь заново: золото, герои, прокачка, стадия."
+	keep.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	keep.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(keep, F_SMALL, MUTED)
+	vb.add_child(keep)
+
+	vb.add_child(_settings_sep())
+	for id in Balance.PRESTIGE_ORDER:
+		vb.add_child(_prestige_row(id))
+	vb.add_child(_settings_sep())
+
+	_prestige_summary_lbl = Label.new()
+	_prestige_summary_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(_prestige_summary_lbl, F_SMALL, TXT)
+	vb.add_child(_prestige_summary_lbl)
+
+	_prestige_confirm = _settings_button("Новая сказка", WOOD, true)
+	_prestige_confirm.pressed.connect(_on_prestige_confirm)
+	vb.add_child(_prestige_confirm)
+	var close := _settings_button("Закрыть", WOOD, true)
+	close.pressed.connect(_close_prestige)
+	vb.add_child(close)
+
+func _prestige_row(id: String) -> Control:
+	var n: Dictionary = Balance.PRESTIGE_NODES[id]
+	var row := PanelContainer.new()
+	row.add_theme_stylebox_override("panel", _flat(SURF, SURF, 12, 0, 12))
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 10)
+	row.add_child(hb)
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_theme_constant_override("separation", 0)
+	hb.add_child(info)
+	var nm := Label.new()
+	nm.text = String(n.name)
+	_lab(nm, F_BODY, GOLD)
+	if _header_font: nm.add_theme_font_override("font", _header_font)
+	info.add_child(nm)
+	var desc := Label.new()
+	desc.text = String(n.desc)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(desc, F_SMALL, MUTED)
+	info.add_child(desc)
+	var lvl := Label.new()
+	_lab(lvl, F_SMALL, TXT)
+	info.add_child(lvl)
+	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.custom_minimum_size = Vector2(120, 56)
+	btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	btn.add_theme_font_size_override("font_size", F_SUB)
+	_style_button(btn, WOOD, WOOD_BORDER, GOLD)
+	btn.pressed.connect(_on_prestige_node.bind(id))
+	hb.add_child(btn)
+	_prestige_rows[id] = {"level": lvl, "btn": btn, "row": row}
+	return row
+
+func _fmt_mult(v: float) -> String:
+	var s := "%.2f" % v
+	while s.ends_with("0"):
+		s = s.left(s.length() - 1)
+	if s.ends_with("."):
+		s = s.left(s.length() - 1)
+	return s
+
+func _refresh_prestige() -> void:
+	if is_instance_valid(_prestige_btn):
+		_prestige_btn.text = ("✦ %d🔔" % Economy.bells) if Economy.bells > 0 else "✦ Сказания"
+		_prestige_btn.modulate = Color(1.35, 1.15, 0.55) if Game.can_prestige() else Color(1, 1, 1)
+	if not is_instance_valid(_prestige_panel):
+		return
+	if is_instance_valid(_prestige_bells_lbl):
+		_prestige_bells_lbl.text = "🔔 %d" % Economy.bells
+	if is_instance_valid(_prestige_pending_lbl):
+		if Game.can_prestige():
+			_prestige_pending_lbl.text = "«Новая сказка» — сброс, чтобы пройти дальше и добыть новых бубенцов."
+		else:
+			_prestige_pending_lbl.text = "Бубенцы капают за новых боссов. «Новая сказка» — со стадии %d." % Balance.PRESTIGE_UNLOCK_STAGE
+	if is_instance_valid(_prestige_summary_lbl):
+		_prestige_summary_lbl.text = "Сейчас: ×%s золото · ×%s DPS · ×%s тап" % [
+			_fmt_mult(Game.prestige_gold_mult()), _fmt_mult(Game.prestige_dps_mult()), _fmt_mult(Game.prestige_tap_mult())]
+	for id in _prestige_rows:
+		var r: Dictionary = _prestige_rows[id]
+		var lvl: int = int(Game.meta_levels.get(id, 0))
+		var per: float = float(Balance.PRESTIGE_NODES[id].get("per", 0.0))
+		var prev := ""
+		if per > 0.0:   # узлы-множители: показываем ×сейчас → ×след
+			prev = "   ×%s → ×%s" % [_fmt_mult(1.0 + per * lvl), _fmt_mult(1.0 + per * (lvl + 1))]
+		r.level.text = "ур. %d/%d%s" % [lvl, Game.meta_cap(id), prev]
+		var cost: int = Game.meta_cost(id)
+		if cost < 0:
+			r.btn.text = "МАКС"
+			r.btn.disabled = true
+		else:
+			r.btn.text = "🔔 %d" % cost
+			r.btn.disabled = Economy.bells < cost
+	if is_instance_valid(_prestige_confirm):
+		_prestige_confirm.disabled = not Game.can_prestige()
+
+func _on_prestige_node(id: String) -> void:
+	if Game.buy_meta(id):   # _refresh_prestige дёрнется через prestige_changed
+		var r: Dictionary = _prestige_rows.get(id, {})
+		if is_instance_valid(_prestige_bells_lbl) and r.has("row") and is_instance_valid(r.row):
+			_prestige_fly(_global_center(_prestige_bells_lbl), _global_center(r.row))
+		_prestige_row_pop(id)
+
+# Бубенцы летят от счётчика к улучшаемой строке
+func _prestige_fly(from: Vector2, to: Vector2) -> void:
+	if not is_instance_valid(_prestige_panel):
+		return
+	for i in 5:
+		var l := Label.new()
+		l.text = "🔔"
+		l.add_theme_font_size_override("font_size", 22)
+		l.add_theme_color_override("font_color", Color("#c9a0dc"))
+		l.z_index = 20
+		l.position = from + Vector2(randf_range(-12, 12), randf_range(-8, 8))
+		_prestige_panel.add_child(l)
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(l, "position", to, 0.42 + i * 0.04).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		tw.tween_property(l, "modulate:a", 0.0, 0.5).set_delay(0.15)
+		tw.chain().tween_callback(l.queue_free)
+
+# Пружина + вспышка улучшаемой строки
+func _prestige_row_pop(id: String) -> void:
+	var r: Dictionary = _prestige_rows.get(id, {})
+	if not (r.has("row") and is_instance_valid(r.row)):
+		return
+	var rw: Control = r.row
+	rw.pivot_offset = rw.size * 0.5
+	rw.modulate = Color(1.5, 1.5, 1.5, 1.0)
+	create_tween().tween_property(rw, "modulate", Color(1, 1, 1, 1), 0.3)
+	var st := create_tween()
+	st.tween_property(rw, "scale", Vector2(1.03, 1.03), 0.08).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	st.tween_property(rw, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_QUAD)
+
+func _open_prestige() -> void:
+	if not is_instance_valid(_prestige_panel):
+		return
+	get_tree().paused = true
+	_refresh_prestige()
+	_prestige_panel.visible = true
+	_prestige_panel.modulate.a = 0.0
+	_prestige_panel.create_tween().tween_property(_prestige_panel, "modulate:a", 1.0, 0.15)
+
+func _close_prestige() -> void:
+	if not is_instance_valid(_prestige_panel):
+		return
+	get_tree().paused = false
+	var tw := _prestige_panel.create_tween()
+	tw.tween_property(_prestige_panel, "modulate:a", 0.0, 0.15)
+	tw.tween_callback(func(): if is_instance_valid(_prestige_panel): _prestige_panel.visible = false)
+
+func _on_prestige_confirm() -> void:
+	Game.do_prestige()                  # сброс; бубенцы уже накоплены с боссов
+	_displayed_gold = Economy.gold
+	_refresh_prestige()                 # окно остаётся открытым — трать бубенцы дальше
+	if is_instance_valid(_prestige_bells_lbl):
+		_punch(_prestige_bells_lbl)
+
+func _maybe_prestige_intro() -> void:
+	if _prestige_intro_seen or not Game.can_prestige():
+		return
+	_prestige_intro_seen = true
+	_save_settings()
+	_open_prestige.call_deferred()
+
+
+# --- Туториал первой сессии --------------------------------------------------
+const TUT_STEPS := [
+	{"lead": "Бей!",     "text": "Тапай по нечисти, пока не завалишь!"},
+	{"lead": "Труппа",   "text": "Найми героя за золото, он будет бить сам!"},
+	{"lead": "Сильнее!", "text": "Прокачай свой удар!"},
+	{"lead": "Ярость!",  "text": "Тапы копят ярость. Как накопишь, нажми, крикни «ХОЙ!» и начнётся ПАНК-РОК!"},
+]
+
+func _build_tutorial() -> void:
+	_tut_layer = CanvasLayer.new()
+	_tut_layer.layer = 40   # выше игры, ниже модалок
+	add_child(_tut_layer)
+	_tut_rect = ColorRect.new()
+	_tut_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tut_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE   # тапы проходят к игре
+	_tut_mat = ShaderMaterial.new()
+	_tut_mat.shader = load("res://game/scenes/tutorial_spotlight.gdshader")
+	_tut_rect.material = _tut_mat
+	_tut_rect.visible = false
+	_tut_layer.add_child(_tut_rect)
+
+	_tut_bubble = PanelContainer.new()
+	_tut_bubble.add_theme_stylebox_override("panel", _flat(SURF, BLOOD, 16, 2, 18))
+	_tut_bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tut_bubble.visible = false
+	_tut_layer.add_child(_tut_bubble)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tut_bubble.add_child(vb)
+	_tut_lead = Label.new()
+	_tut_lead.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(_tut_lead, F_TITLE, GOLD)
+	if _header_font: _tut_lead.add_theme_font_override("font", _header_font)
+	vb.add_child(_tut_lead)
+	_tut_text = Label.new()
+	_tut_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tut_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(_tut_text, F_BODY, TXT)
+	vb.add_child(_tut_text)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	vb.add_child(row)
+	var skip := Button.new()
+	skip.text = "Пропустить"
+	skip.focus_mode = Control.FOCUS_NONE
+	skip.flat = true
+	skip.add_theme_font_size_override("font_size", F_SMALL)
+	skip.add_theme_color_override("font_color", MUTED)
+	skip.pressed.connect(_tut_finish)
+	row.add_child(skip)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(sp)
+	var nb := Button.new()
+	nb.text = "Далее →"
+	nb.focus_mode = Control.FOCUS_NONE
+	nb.add_theme_font_size_override("font_size", F_SUB)
+	_style_button(nb, WOOD, WOOD_BORDER, GOLD)
+	nb.pressed.connect(_tut_advance)
+	row.add_child(nb)
+
+func _start_tutorial() -> void:
+	if _tut_done or not is_instance_valid(_tut_rect):
+		return
+	_tut_step = 0
+	_tut_taps = 0
+	_tut_shown = false
+	_tut_rect.visible = false
+	_tut_bubble.visible = false
+	_tut_show_step()   # текст; показ — в _process_tutorial, когда precond выполнен
+
+# Условие появления коачмарка шага (действие реально возможно)
+func _tut_precond() -> bool:
+	match _tut_step:
+		0: return true
+		1: return Game.ally_max_affordable(Game.ALLY_ORDER[0]) >= 1   # хватает на героя
+		2: return Game.tap_max_affordable() >= 1                       # хватает на прокачку
+		3: return Game.punk_ready()                                    # панк заряжен
+	return true
+
+func _tut_set_shown(on: bool) -> void:
+	if not (is_instance_valid(_tut_rect) and is_instance_valid(_tut_bubble)):
+		return
+	if on:
+		_tut_rect.visible = true
+		_tut_bubble.visible = true
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(_tut_rect, "modulate:a", 1.0, 0.25)
+		tw.tween_property(_tut_bubble, "modulate:a", 1.0, 0.25)
+	else:
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(_tut_rect, "modulate:a", 0.0, 0.2)
+		tw.tween_property(_tut_bubble, "modulate:a", 0.0, 0.2)
+		tw.chain().tween_callback(func():
+			if is_instance_valid(_tut_rect): _tut_rect.visible = false
+			if is_instance_valid(_tut_bubble): _tut_bubble.visible = false)
+
+func _tut_show_step() -> void:
+	if _tut_step < 0 or _tut_step >= TUT_STEPS.size():
+		return
+	var s: Dictionary = TUT_STEPS[_tut_step]
+	_tut_taps = 0
+	if is_instance_valid(_tut_lead): _tut_lead.text = s.lead
+	if is_instance_valid(_tut_text): _tut_text.text = s.text
+
+func _tut_advance() -> void:
+	_tut_step += 1
+	if _tut_step >= TUT_STEPS.size():
+		_tut_finish()
+	else:
+		_tut_show_step()
+
+func _tut_finish() -> void:
+	_tut_step = -1
+	_tut_done = true
+	_save_settings()
+	if is_instance_valid(_tut_rect):
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(_tut_rect, "modulate:a", 0.0, 0.25)
+		tw.tween_property(_tut_bubble, "modulate:a", 0.0, 0.25)
+		tw.chain().tween_callback(func():
+			if is_instance_valid(_tut_rect): _tut_rect.visible = false
+			if is_instance_valid(_tut_bubble): _tut_bubble.visible = false)
+
+func _tut_target() -> Dictionary:
+	match _tut_step:
+		0:
+			if is_instance_valid(_enemy):
+				var gr := _enemy.get_global_rect()
+				var c := gr.position + gr.size * 0.5
+				return {"rect": Rect2(c - Vector2(150, 150), Vector2(300, 300)), "shape": "circle"}
+		1:
+			var w: Dictionary = _card_widgets.get(Game.ALLY_ORDER[0], {})
+			if w.has("frame") and is_instance_valid(w.frame):
+				return {"rect": w.frame.get_global_rect(), "shape": "rect"}
+		2:
+			if is_instance_valid(_tap_btn):
+				return {"rect": _tap_btn.get_global_rect(), "shape": "rect"}
+		3:
+			if is_instance_valid(_punk_btn):
+				return {"rect": _punk_btn.get_global_rect(), "shape": "rect"}
+	return {"rect": Rect2(40, 300, 640, 120), "shape": "rect"}
+
+func _any_ally_hired() -> bool:
+	for id in Game.ALLY_ORDER:
+		if int(Game.ally_levels.get(id, 0)) > 0:
+			return true
+	return false
+
+func _process_tutorial(delta: float) -> void:
+	if _tut_step < 0:
+		return
+	# показываем коачмарк только когда действие шага реально возможно
+	if not _tut_precond():
+		if _tut_shown:
+			_tut_shown = false
+			_tut_set_shown(false)
+		return
+	if not _tut_shown:
+		_tut_shown = true
+		_tut_set_shown(true)
+	_tut_pulse_t += delta
+	var info := _tut_target()
+	var r: Rect2 = info.rect
+	var sw: Vector2 = get_viewport().get_visible_rect().size
+	if _tut_mat:
+		_tut_mat.set_shader_parameter("vp", sw)
+		_tut_mat.set_shader_parameter("t_center", r.position + r.size * 0.5)
+		if info.shape == "circle":
+			var rad: float = max(r.size.x, r.size.y) * 0.5
+			_tut_mat.set_shader_parameter("t_half", Vector2(rad, rad))
+			_tut_mat.set_shader_parameter("t_radius", rad)
+		else:
+			_tut_mat.set_shader_parameter("t_half", r.size * 0.5 + Vector2(12, 12))
+			_tut_mat.set_shader_parameter("t_radius", 16.0)
+		_tut_mat.set_shader_parameter("pulse", 0.5 + 0.5 * sin(_tut_pulse_t * 4.0))
+	if is_instance_valid(_tut_bubble):
+		var bh: float = _tut_bubble.get_combined_minimum_size().y
+		var below: bool = (r.position.y + r.size.y * 0.5) < sw.y * 0.5
+		var by: float = (r.end.y + 26.0) if below else (r.position.y - bh - 26.0)
+		by = clampf(by, 20.0, sw.y - bh - 20.0)
+		_tut_bubble.position = Vector2(18.0, by)
+		_tut_bubble.size = Vector2(sw.x - 36.0, bh)
+	var adv := false
+	match _tut_step:
+		0: adv = _tut_taps >= 3
+		1: adv = _any_ally_hired()
+		2: adv = Game.tap_level > 0
+		3: adv = Game.punk_active
+	if adv:
+		_tut_advance()
+
+
 # --- Интро: элементы плавно проявляются и подъезжают --------------------------
 func _intro() -> void:
 	var items: Array = [_bgrect, get_node_or_null("%TopBar"), get_node_or_null("%Title"),
@@ -1161,11 +1701,15 @@ func _load_settings() -> void:
 	if cf.load(SETTINGS_PATH) == OK:
 		_music_on = bool(cf.get_value("audio", "music_on", true))
 		_reduce_fx = bool(cf.get_value("video", "reduce_fx", false))
+		_prestige_intro_seen = bool(cf.get_value("flags", "prestige_intro_seen", false))
+		_tut_done = bool(cf.get_value("flags", "tut_done", false))
 
 func _save_settings() -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("audio", "music_on", _music_on)
 	cf.set_value("video", "reduce_fx", _reduce_fx)
+	cf.set_value("flags", "prestige_intro_seen", _prestige_intro_seen)
+	cf.set_value("flags", "tut_done", _tut_done)
 	cf.save(SETTINGS_PATH)
 
 func _apply_settings() -> void:
@@ -1177,18 +1721,18 @@ func _build_settings() -> void:
 	# шестерёнка в левом верхнем углу арены (зеркально кнопке клада)
 	_gear_btn = Button.new()
 	_gear_btn.text = "⚙"
-	_gear_btn.add_theme_font_size_override("font_size", 28)
+	_gear_btn.add_theme_font_size_override("font_size", 24)
 	_gear_btn.focus_mode = Control.FOCUS_NONE
-	_gear_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	_gear_btn.position = Vector2(12, 80)
-	_gear_btn.custom_minimum_size = Vector2(48, 48)
+	_gear_btn.custom_minimum_size = Vector2(46, 42)
+	_gear_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 	_style_button(_gear_btn, WOOD, WOOD_BORDER, GOLD)
 	_gear_btn.pressed.connect(_open_settings)
-	if is_instance_valid(_arena):
-		_arena.add_child(_gear_btn)
+	var rc := get_node_or_null("%RightCol")
+	if rc: rc.add_child(_gear_btn)
 
 	_settings_layer = CanvasLayer.new()
 	_settings_layer.layer = 60
+	_settings_layer.process_mode = Node.PROCESS_MODE_ALWAYS   # работает в паузе
 	add_child(_settings_layer)
 	_settings_panel = Control.new()
 	_settings_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1279,18 +1823,20 @@ func _settings_button(text: String, bg: Color, accent: bool) -> Button:
 func _open_settings() -> void:
 	if not is_instance_valid(_settings_panel):
 		return
+	get_tree().paused = true
 	_reset_armed = false
 	if is_instance_valid(_reset_btn): _reset_btn.text = "Сбросить прогресс"
 	_settings_panel.visible = true
 	_settings_panel.modulate.a = 0.0
-	create_tween().tween_property(_settings_panel, "modulate:a", 1.0, 0.15)
+	_settings_panel.create_tween().tween_property(_settings_panel, "modulate:a", 1.0, 0.15)
 
 func _close_settings() -> void:
 	if not is_instance_valid(_settings_panel):
 		return
-	var tw := create_tween()
+	get_tree().paused = false
+	var tw := _settings_panel.create_tween()
 	tw.tween_property(_settings_panel, "modulate:a", 0.0, 0.15)
-	tw.tween_callback(func(): _settings_panel.visible = false)
+	tw.tween_callback(func(): if is_instance_valid(_settings_panel): _settings_panel.visible = false)
 
 func _on_music_toggled(on: bool) -> void:
 	_music_on = on
@@ -1557,21 +2103,19 @@ func _card_pop(aid: String) -> void:
 		return
 	if is_instance_valid(w.frame):
 		var f: Control = w.frame
+		var rail := get_node_or_null("%TroupeRail")
+		if rail: rail.clip_contents = false   # на время попа не режем краями рельса
 		f.pivot_offset = f.size * 0.5
-		f.z_index = 5   # на передний план, чтобы анимацию не резали соседи
+		f.z_index = 5   # на передний план
 		var st := create_tween()
-		st.tween_property(f, "scale", Vector2(1.08, 1.08), 0.08).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		st.tween_property(f, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_QUAD)
-		st.tween_callback(func(): if is_instance_valid(f): f.z_index = 0)
+		st.tween_property(f, "scale", Vector2(1.10, 1.10), 0.09).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		st.tween_property(f, "scale", Vector2.ONE, 0.15).set_trans(Tween.TRANS_QUAD)
+		st.tween_callback(func():
+			if is_instance_valid(f): f.z_index = 0
+			if rail: rail.clip_contents = true)
 		f.modulate = Color(1.55, 1.55, 1.55, 1.0)   # короткая вспышка яркости
 		var mt := create_tween()
 		mt.tween_property(f, "modulate", Color(1, 1, 1, 1), 0.28)
-	if is_instance_valid(w.portrait):
-		var p: Control = w.portrait
-		p.pivot_offset = p.size * 0.5
-		var pt := create_tween()
-		pt.tween_property(p, "scale", Vector2(1.14, 1.14), 0.08).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		pt.tween_property(p, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_QUAD)
 
 
 const _UNITS := ["", "K", "M", "B", "T", "aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai", "aj", "ak", "al", "am", "an", "ao", "ap", "aq", "ar", "as", "at", "au", "av", "aw", "ax", "ay", "az"]

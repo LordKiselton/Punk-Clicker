@@ -21,8 +21,8 @@ android/build/assetPackInstallTime/
 android/build/src/main/assets/
 shot.png.import
 
-# --- Исходники-оригиналы арта (не обязательно в репо; раскомментируй чтобы исключить) ---
-# art_in/
+# --- Исходники-оригиналы арта (генерятся отдельно; в репо не нужны) ---
+art_in/
 
 # --- OS ---
 Thumbs.db

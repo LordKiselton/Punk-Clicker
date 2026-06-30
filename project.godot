@@ -14,7 +14,7 @@ config/name="Балаган"
 config/description="Боевой кликер в мире панк-сказки. Тропа, нечисть, балаган."
 run/main_scene="res://game/scenes/Main.tscn"
 config/features=PackedStringArray("4.6", "Mobile")
-config/icon="res://icon.svg"
+config/icon="res://icon/icon_512.png"
 boot_splash/bg_color=Color(0.101961, 0.07451, 0.12549, 1)
 
 [autoload]
