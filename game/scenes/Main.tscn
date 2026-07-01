@@ -32,7 +32,7 @@ layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_bottom = -548.0
+offset_bottom = -516.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
@@ -50,7 +50,7 @@ anchor_bottom = 1.0
 offset_left = 18.0
 offset_top = 256.0
 offset_right = -18.0
-offset_bottom = -548.0
+offset_bottom = -516.0
 grow_horizontal = 2
 grow_vertical = 2
 
@@ -63,7 +63,7 @@ anchor_bottom = 1.0
 offset_left = 24.0
 offset_top = 56.0
 offset_right = -24.0
-offset_bottom = -16.0
+offset_bottom = -64.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
@@ -141,6 +141,7 @@ layout_mode = 2
 
 [node name="RateLabel" type="Label" parent="TopBar/LeftCol"]
 unique_name_in_owner = true
+visible = false
 layout_mode = 2
 
 [node name="BellsLabel" type="Label" parent="TopBar/LeftCol"]
@@ -207,9 +208,9 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 18.0
-offset_top = -602.0
+offset_top = -428.0
 offset_right = -18.0
-offset_bottom = -292.0
+offset_bottom = -132.0
 grow_horizontal = 2
 grow_vertical = 0
 horizontal_scroll_mode = 3
@@ -219,7 +220,7 @@ vertical_scroll_mode = 0
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
-theme_override_constants/separation = 10
+theme_override_constants/separation = 6
 
 [node name="P1" type="TextureRect" parent="TroupeRail/Cards"]
 custom_minimum_size = Vector2(150, 0)
@@ -256,9 +257,9 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 18.0
-offset_top = -280.0
+offset_top = -120.0
 offset_right = -18.0
-offset_bottom = -80.0
+offset_bottom = -64.0
 grow_horizontal = 2
 grow_vertical = 0
 theme_override_constants/separation = 10
@@ -267,6 +268,20 @@ theme_override_constants/separation = 10
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Наточить клинок"
+
+[node name="PunkSlot" type="Control" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 18.0
+offset_top = -500.0
+offset_right = -18.0
+offset_bottom = -436.0
+grow_horizontal = 2
+grow_vertical = 0
 
 [node name="FxLayer" type="Control" parent="."]
 unique_name_in_owner = true

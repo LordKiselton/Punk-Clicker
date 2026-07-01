@@ -23,6 +23,8 @@ var _yandex: Node = null
 var _pending_placement: String = ""
 var _reward_earned: bool = false
 var _want_show: bool = false
+var _showing: bool = false           # ролик реально показывается (не трогать сторожем)
+const RV_LOAD_TIMEOUT := 9.0         # сек ожидания загрузки — иначе отменяем (анти-фриз)
 
 
 func _ready() -> void:
@@ -69,29 +71,56 @@ func show_rewarded(placement: String) -> void:
 		_pause_game(false)
 		rewarded_completed.emit(placement)
 		return
+	_showing = false
+	_arm_load_watchdog()
 	if _yandex.is_rewarded_video_loaded():
-		_yandex.show_rewarded_video()
+		_start_show()
 	else:
 		print("[MON] Ролик ещё не загружен — гружу и покажу по готовности.")
 		_want_show = true
 		_yandex.load_rewarded_video()
 
 
-func _on_rv_loaded() -> void:
-	print("[MON] rewarded loaded")
-	if _want_show:
-		_want_show = false
-		_yandex.show_rewarded_video()
+func _start_show() -> void:
+	_showing = true
+	_yandex.show_rewarded_video()
 
 
-func _on_rv_failed(error_code) -> void:
-	push_warning("[MON] rewarded failed to load: %s" % str(error_code))
+# Сторож: если за RV_LOAD_TIMEOUT ролик так и не начал показ — снимаем паузу и
+# считаем провалом, чтобы игра не зависла на чёрном экране без сети.
+func _arm_load_watchdog() -> void:
+	if get_tree() == null:
+		return
+	var timer := get_tree().create_timer(RV_LOAD_TIMEOUT, true, false, true)
+	timer.timeout.connect(_on_load_watchdog)
+
+
+func _on_load_watchdog() -> void:
+	if _showing:
+		return   # уже показывается — всё в порядке
+	push_warning("[MON] rewarded не загрузился за %ss — отменяю (анти-фриз)" % RV_LOAD_TIMEOUT)
 	_want_show = false
 	_pause_game(false)
 	rewarded_failed.emit(_pending_placement)
 
 
+func _on_rv_loaded() -> void:
+	print("[MON] rewarded loaded")
+	if _want_show:
+		_want_show = false
+		_start_show()
+
+
+func _on_rv_failed(error_code) -> void:
+	push_warning("[MON] rewarded failed to load: %s" % str(error_code))
+	_want_show = false
+	_showing = false
+	_pause_game(false)
+	rewarded_failed.emit(_pending_placement)
+
+
 func _on_rv_closed() -> void:
+	_showing = false
 	_pause_game(false)
 	if _reward_earned:
 		rewarded_completed.emit(_pending_placement)

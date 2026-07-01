@@ -15,7 +15,7 @@ const CRIT_CHANCE: float = 0.05          # шанс крита (5%)
 const CRIT_MULT: float = 2.0             # множитель урона крита
 
 # --- Враги -----------------------------------------------------------------
-const ENEMY_HP_BASE: float = 10.0        # HP врага на стадии 1
+const ENEMY_HP_BASE: float = 24.0        # HP врага на стадии 1 (медленнее «два удара и смена»)
 const ENEMY_HP_GROWTH: float = 1.17      # во сколько раз растёт HP за стадию (главный регулятор темпа)
 const ENEMY_GOLD_BASE: float = 3.0       # золото с врага на стадии 1
 const ENEMY_GOLD_GROWTH: float = 1.155   # рост золота за стадию (чуть ниже HP)
@@ -23,7 +23,7 @@ const ENEMY_GOLD_GROWTH: float = 1.155   # рост золота за стади
 # --- Стадии и боссы --------------------------------------------------------
 const ENEMIES_PER_STAGE: int = 10        # сколько врагов на обычной стадии
 const BOSS_EVERY: int = 5                # каждые N стадий — босс
-const BOSS_HP_MULT: float = 7.0          # множитель HP босса
+const BOSS_HP_MULT: float = 11.0         # множитель HP босса (босс = настоящий DPS-чек / стена)
 const BOSS_GOLD_MULT: float = 10.0       # множитель золота с босса
 const BOSS_TIMER_SEC: float = 30.0       # таймер боя с боссом
 const STAGES_PER_LOCATION: int = 50      # стадий в одной локации (фон/враги/музыка)
@@ -41,9 +41,10 @@ const SKILL_GOLD_HOUR_MULT: float = 3.0        # «Золотой час»: ×з
 # --- ПОЛНЫЙ ПАНК-РОК (режим-раж) -------------------------------------------
 # Заряд копится ТОЛЬКО от тапов игрока (idle/герои не заряжают) → награждает
 # активную игру. На время режима всё кратно усиливается. См. MONETIZATION.md.
-const PUNK_TAPS_TO_FULL: int = 40              # сколько тапов до полного заряда
+const PUNK_TAPS_TO_FULL: int = 80              # сколько тапов до полного заряда (заряжается медленнее)
 const PUNK_DURATION_SEC: float = 15.0          # длительность «беспредела»
-const PUNK_DMG_MULT: float = 5.0               # ×урон (тап и герои)
+const PUNK_DMG_MULT: float = 5.0               # ×урон (тап и герои) на обычных стадиях
+const PUNK_BOSS_DMG_MULT: float = 3.5          # ×урон панка НА БОССЕ (слабее — босс остаётся стеной)
 const PUNK_SPEED_MULT: float = 2.5             # ×скорость атаки героев (суммарный DPS ~x12)
 const PUNK_GOLD_MULT: float = 5.0              # ×золото/ресурсы
 
@@ -61,13 +62,13 @@ const PRESTIGE_NODES := {
 	"gold":    {"name": "Звон золота",   "desc": "Золото со всех источников: +60% за уровень.",            "per": 0.60, "cost": 20.0, "growth": 1.16, "cap": 80},
 	"dps":     {"name": "Ярость труппы", "desc": "Урон героев: +50% за уровень.",                          "per": 0.50, "cost": 18.0, "growth": 1.16, "cap": 80},
 	"tap":     {"name": "Тяжёлый удар",  "desc": "Урон за тап: +60% за уровень.",                           "per": 0.60, "cost": 15.0, "growth": 1.16, "cap": 80},
-	"start":   {"name": "Щедрый старт",  "desc": "Начинаешь новую сказку с золотом. Выше уровень — больше.", "per": 0.0,  "cost": 25.0, "growth": 1.30, "cap": 20},
+	"start":   {"name": "Щедрый старт",  "desc": "Начинаешь Новую Сказку с золотом.",                        "per": 0.0,  "cost": 25.0, "growth": 1.30, "cap": 20},
 	"offline": {"name": "Долгий сон",    "desc": "Оффлайн: +2 ч копилки и +10% дохода за уровень.",          "per": 0.10, "cost": 40.0, "growth": 1.5,  "cap": 10},
-	"drum":    {"name": "Барабанщик",    "desc": "Панк-рок: +2 с режима и быстрее заряд за уровень.",        "per": 0.0,  "cost": 35.0, "growth": 1.5,  "cap": 10},
+	"drum":    {"name": "Лютый Панк",    "desc": "Панк-рок: +2 с режима и быстрее заряд за уровень.",        "per": 0.0,  "cost": 35.0, "growth": 1.5,  "cap": 10},
 }
 const PRESTIGE_ORDER := ["gold", "dps", "tap", "start", "offline", "drum"]
 const PRESTIGE_OFFLINE_HOURS_PER: float = 2.0  # +ч оффлайн-капа за уровень «Долгий сон»
-const PRESTIGE_PUNK_SEC_PER: float = 2.0       # +с длительности панка за уровень «Барабанщик»
+const PRESTIGE_PUNK_SEC_PER: float = 2.0       # +с длительности панка за уровень «Лютый Панк»
 const PRESTIGE_PUNK_TAPS_PER: int = 3          # −тапов до заряда за уровень
 const PRESTIGE_PUNK_TAPS_MIN: int = 10         # не ниже стольких тапов
 
