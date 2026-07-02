@@ -27,6 +27,7 @@ const F_NUM := 32
 const F_RES := 30        # единый размер верхних ресурсов
 const F_BOSS := 42       # крупный текст босса
 const PORTRAIT_H := 150  # фикс. высота портрета героя
+const APP_VERSION := "0.1 (сборка 53)"   # футер настроек; поднять при релизе вместе с version/code
 const F_BODY := 26
 const F_SUB := 22
 const F_SMALL := 18
@@ -191,6 +192,7 @@ var _daily_panel: Control = null
 var _daily_box: Control = null
 var _daily_slots: Dictionary = {}       # day -> {frame, val, day_lbl}
 var _daily_claim_btn: Button = null
+var _daily_next_lbl: Label = null       # «Приходи завтра…», когда награда забрана
 var _daily_btn: Button = null           # кнопка «ДЕНЬ N» в топбаре
 var _daily_btn_tw: Tween = null
 var _daily_intro_seen: bool = false     # первое знакомство (после первого босса)
@@ -2373,7 +2375,7 @@ func _build_daily() -> void:
 	if _header_font: title.add_theme_font_override("font", _header_font)
 	vb.add_child(title)
 	var flavor := Label.new()
-	flavor.text = "Заходи каждый день за новыми подарками!"
+	flavor.text = "Заходи каждый день — награды растут вместе с труппой!"
 	flavor.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	flavor.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_lab(flavor, F_SMALL, MUTED)
@@ -2390,11 +2392,11 @@ func _build_daily() -> void:
 			hb.add_child(_daily_slot(d, false))
 	vb.add_child(_daily_slot(7, true))
 
-	var hint := Label.new()
-	hint.text = "Награды растут вместе с силой труппы."
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(hint, F_SMALL, MUTED)
-	vb.add_child(hint)
+	_daily_next_lbl = Label.new()
+	_daily_next_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(_daily_next_lbl, F_SMALL, MUTED)
+	_daily_next_lbl.visible = false
+	vb.add_child(_daily_next_lbl)
 
 	_daily_claim_btn = _settings_button("Забрать", WOOD, true)
 	_daily_claim_btn.pressed.connect(_on_daily_claim)
@@ -2421,6 +2423,26 @@ func _daily_slot(d: int, wide: bool) -> Control:
 	day_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lab(day_lbl, F_SMALL, GOLD if d == 7 else MUTED)
 	if d == 7 and _header_font: day_lbl.add_theme_font_override("font", _header_font)
+	# золотой бейдж «✓» забранного дня (на Label — оверлей контейнером не разъезжается)
+	var check := Panel.new()
+	check.add_theme_stylebox_override("panel", _flat(GOLD, GOLD, 999, 0, 0))
+	check.visible = false
+	check.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	day_lbl.add_child(check)
+	check.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	check.offset_left = -20
+	check.offset_top = 0
+	check.offset_right = -2
+	check.offset_bottom = 18
+	var chl := Label.new()
+	chl.text = "✓"
+	chl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	chl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	chl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	chl.add_theme_font_size_override("font_size", 13)
+	chl.add_theme_color_override("font_color", DARK)
+	chl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	check.add_child(chl)
 	var val := Label.new()
 	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	val.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -2447,7 +2469,7 @@ func _daily_slot(d: int, wide: bool) -> Control:
 		vb.add_child(day_lbl)
 		vb.add_child(ic)
 		vb.add_child(val)
-	_daily_slots[d] = {"frame": frame, "val": val, "day_lbl": day_lbl, "icon": ic}
+	_daily_slots[d] = {"frame": frame, "val": val, "day_lbl": day_lbl, "icon": ic, "check": check}
 	return frame
 
 # Живые числа + состояния слотов (пересчёт при каждом открытии/клейме)
@@ -2479,11 +2501,42 @@ func _refresh_daily() -> void:
 				s.icon.texture = _gold_tex
 		var claimed: bool = d < cur
 		var current: bool = d == cur
-		s.frame.add_theme_stylebox_override("panel", _flat(SURF, GOLD if current else SURF_BORDER, 12, 3 if current else 2, 8))
-		s.frame.modulate = Color(0.55, 0.55, 0.55) if claimed else (Color.WHITE if current else Color(0.85, 0.85, 0.85))
+		if is_instance_valid(s.get("check")):
+			s.check.visible = claimed
+		# подпись дня: у текущего — «СЕГОДНЯ»
+		if current:
+			s.day_lbl.text = "Гранд-финал · СЕГОДНЯ" if d == 7 else "СЕГОДНЯ"
+			s.day_lbl.add_theme_color_override("font_color", GOLD)
+		else:
+			s.day_lbl.text = "Гранд-финал" if d == 7 else "День %d" % d
+			s.day_lbl.add_theme_color_override("font_color", GOLD if d == 7 else MUTED)
+		# Гранд-финал — тёплый золотой тинт, остальные — обычная поверхность
+		var bg: Color = Color("#312508") if d == 7 else SURF
+		var border: Color = GOLD if current else (Color("#b8942f") if d == 7 else SURF_BORDER)
+		s.frame.add_theme_stylebox_override("panel", _flat(bg, border, 12, 3 if current else 2, 8))
+		s.frame.modulate = Color(0.45, 0.45, 0.45) if claimed else (Color.WHITE if current else Color(0.8, 0.8, 0.8))
+		# мягкий пульс текущего слота
+		var tw = s.get("pulse")
+		if current and can:
+			if tw == null or not (tw as Tween).is_valid():
+				s.frame.pivot_offset = s.frame.custom_minimum_size * 0.5
+				var t2: Tween = (s.frame as Control).create_tween().set_loops()
+				t2.tween_property(s.frame, "scale", Vector2(1.02, 1.02), 0.55).set_trans(Tween.TRANS_SINE)
+				t2.tween_property(s.frame, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
+				s["pulse"] = t2
+		else:
+			if tw != null and (tw as Tween).is_valid():
+				(tw as Tween).kill()
+			s["pulse"] = null
+			s.frame.scale = Vector2.ONE
+	# кнопка живёт только когда есть что забрать; иначе — тихая строка
 	if is_instance_valid(_daily_claim_btn):
+		_daily_claim_btn.visible = can
 		_daily_claim_btn.disabled = not can
-		_daily_claim_btn.text = "Забрать" if can else "Уже забрал — приходи завтра"
+		_daily_claim_btn.text = "Забрать"
+	if is_instance_valid(_daily_next_lbl):
+		_daily_next_lbl.visible = not can
+		_daily_next_lbl.text = "Приходи завтра — готовится День %d!" % cur
 
 func _refresh_daily_btn() -> void:
 	if not is_instance_valid(_daily_btn):
@@ -2863,22 +2916,38 @@ func _build_settings() -> void:
 	priv.pressed.connect(func():
 		OS.shell_open("https://lordkiselton.github.io/Punk-Clicker/privacy.html"))
 	vb.add_child(priv)
-	var cred := _settings_button("Кредиты: «Балаган» · панк-сказка", SURF, false)
-	cred.disabled = true
-	vb.add_child(cred)
 
+	# --- дев-зона: приглушена, вырезается перед релизом ---
 	vb.add_child(_settings_sep())
-	var dev := _settings_button("⚡ [ТЕСТ] Прокачать до 50 стадии", WOOD, true)
+	var devl := Label.new()
+	devl.text = "— для теста —"
+	devl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(devl, F_SMALL, Color("#5a4f68"))
+	vb.add_child(devl)
+	var dev := _settings_button("Прокачать до 50 стадии", SURF, false)
+	dev.custom_minimum_size = Vector2(0, 46)
+	dev.add_theme_font_size_override("font_size", F_SMALL)
+	dev.modulate = Color(0.75, 0.75, 0.75)
 	dev.pressed.connect(_on_dev_boost_pressed)
 	vb.add_child(dev)
-	var tlm := _settings_button("[ТЕСТ] Скопировать лог баланса", SURF, false)
+	var tlm := _settings_button("Скопировать лог баланса", SURF, false)
+	tlm.custom_minimum_size = Vector2(0, 46)
+	tlm.add_theme_font_size_override("font_size", F_SMALL)
+	tlm.modulate = Color(0.75, 0.75, 0.75)
 	tlm.pressed.connect(func():
 		DisplayServer.clipboard_set(Game.telemetry_text())
 		tlm.text = "Лог в буфере — вставь в чат/файл")
 	vb.add_child(tlm)
+
 	var close := _settings_button("Закрыть", WOOD, true)
 	close.pressed.connect(_close_settings)
 	vb.add_child(close)
+	# футер: кто мы + версия (полезно для саппорта)
+	var foot := Label.new()
+	foot.text = "«Балаган» · панк-сказка · v%s" % APP_VERSION
+	foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(foot, F_SMALL, Color("#5a4f68"))
+	vb.add_child(foot)
 
 func _settings_sep() -> Control:
 	var s := HSeparator.new()
@@ -2892,7 +2961,7 @@ func _settings_toggle_row(text: String, on: bool, cb: Callable) -> Control:
 	var row := PanelContainer.new()
 	row.add_theme_stylebox_override("panel", _flat(SURF, SURF, 12, 0, 14))
 	var hb := HBoxContainer.new()
-	hb.custom_minimum_size = Vector2(0, 84)
+	hb.custom_minimum_size = Vector2(0, 66)
 	row.add_child(hb)
 	var l := Label.new()
 	l.text = text
@@ -2900,15 +2969,32 @@ func _settings_toggle_row(text: String, on: bool, cb: Callable) -> Control:
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_lab(l, F_BODY, TXT)
 	hb.add_child(l)
-	var t := CheckButton.new()
+	# пилюля ВКЛ/ВЫКЛ в нашем стиле (системный CheckButton в скейле выглядел чужим)
+	var t := Button.new()
+	t.toggle_mode = true
 	t.button_pressed = on
 	t.focus_mode = Control.FOCUS_NONE
+	t.custom_minimum_size = Vector2(122, 50)
 	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	t.pivot_offset = Vector2(30, 18)
-	t.scale = Vector2(2.1, 2.1)   # крупные тумблеры — легко попасть
-	t.toggled.connect(cb)
+	t.add_theme_font_size_override("font_size", F_SMALL)
+	_style_toggle_pill(t, on)
+	t.toggled.connect(func(v: bool):
+		_style_toggle_pill(t, v)
+		_punch(t)
+		cb.call(v))
 	hb.add_child(t)
 	return row
+
+func _style_toggle_pill(b: Button, on: bool) -> void:
+	b.text = "ВКЛ" if on else "ВЫКЛ"
+	var bg: Color = WOOD if on else DARK
+	var border: Color = GOLD if on else SURF_BORDER
+	var fg: Color = GOLD if on else MUTED
+	for st in ["normal", "hover", "pressed", "focus"]:
+		b.add_theme_stylebox_override(st, _flat(bg, border, 999, 2, 8))
+	b.add_theme_color_override("font_color", fg)
+	b.add_theme_color_override("font_pressed_color", fg)
+	b.add_theme_color_override("font_hover_color", fg)
 
 func _settings_button(text: String, bg: Color, accent: bool) -> Button:
 	var b := Button.new()
