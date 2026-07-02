@@ -51,6 +51,14 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- Локальные уведомления «Балагана» (свой мини-плагин) -->
+        <receiver
+            android:name="com.balagan.notify.NotifyReceiver"
+            android:exported="false" />
+        <meta-data
+            android:name="org.godotengine.plugin.v2.BalaganNotify"
+            android:value="com.balagan.notify.NotifyPlugin" />
+
     </application>
 
 </manifest>

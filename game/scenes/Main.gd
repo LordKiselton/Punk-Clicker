@@ -146,6 +146,7 @@ var _enemy_parallax: Vector2 = Vector2.ZERO    # смещение паралла
 const SETTINGS_PATH := "user://settings.cfg"
 var _music_on: bool = true
 var _reduce_fx: bool = false
+var _notify_on: bool = true
 var _gear_btn: Button = null
 var _settings_layer: CanvasLayer = null
 var _settings_panel: Control = null
@@ -181,6 +182,30 @@ var _prestige_leftover: Control = null # диалог «остались чер�
 var _prestige_leftover_box: Control = null
 var _prestige_leftover_lbl: Label = null
 var _prestige_s2_icon: TextureRect = null   # иконка черепа на шаге 2 (цель полёта при покупке)
+var _prestige_step1_close: Button = null
+var _prestige_lock: int = 0             # первый показ Сказки: отсчёт блокировки кнопок
+var _boss_ad_btn: Button = null         # реклама «×2 урон этому боссу»
+# --- «Афиша дня» ---------------------------------------------------------------
+var _daily_layer: CanvasLayer = null
+var _daily_panel: Control = null
+var _daily_box: Control = null
+var _daily_slots: Dictionary = {}       # day -> {frame, val, day_lbl}
+var _daily_claim_btn: Button = null
+var _daily_btn: Button = null           # кнопка «ДЕНЬ N» в топбаре
+var _daily_btn_tw: Tween = null
+var _daily_intro_seen: bool = false     # первое знакомство (после первого босса)
+var _daily_shown_session: bool = false  # автопоказ — раз за сессию
+var _daily_check_t: float = 0.0
+
+# --- Разрешения / приветствие Шута ---------------------------------------------
+var _welcome_seen: bool = false         # первое знакомство (софт-аск микрофона) показано
+var _push_asks: int = 0                 # сколько раз софт-аскали пуши (макс 2)
+var _char_layer: CanvasLayer = null     # диалог с портретом персонажа
+var _listen_perm_btn: Button = null     # «Разрешить крик» в оверлее прослушки
+var _offline_amt: float = 0.0           # оффлайн-доход, ждущий забора (для ×2)
+var _offline_root: Control = null
+var _offline_panel: Control = null
+
 var _nudge: Control = null              # подсказка «Начни Новую сказку» у кнопки
 var _nudge_tw: Tween = null             # пульс кнопки под нуджем
 var _last_fail_stage: int = -1          # для нуджа: стадия последнего провала босса
@@ -284,6 +309,7 @@ func _ready() -> void:
 	Game.boss_failed.connect(_on_boss_failed)
 	Game.prestige_changed.connect(_refresh_prestige)
 	Game.boss_bells_awarded.connect(_on_boss_bells_awarded)
+	Game.daily_changed.connect(func(): _refresh_daily(); _refresh_daily_btn())
 	Economy.bells_changed.connect(func(_v): _refresh(); _refresh_prestige())
 	Game.stats_changed.connect(func(): _refresh())   # карточки обновляем, не пересоздаём (живая анимация)
 	Game.hero_attacked.connect(_on_hero_attacked)
@@ -298,11 +324,11 @@ func _ready() -> void:
 	_displayed_gold = Economy.gold
 	_displayed_bells_top = float(Economy.bells)
 	_refresh()
-	_intro()
-	if Game.last_offline_income > 0.0:
-		_show_offline_popup.call_deferred(Game.last_offline_income)
-	if not _tut_done:
-		_start_tutorial.call_deferred()   # первый запуск — обучение
+	_build_daily()
+	_refresh_daily_btn()
+	# Гладкий старт: интро играет ПОД уход лоадскрина; окна — строго после него, по одному
+	get_tree().create_timer(1.2).timeout.connect(_intro)
+	get_tree().create_timer(2.2).timeout.connect(_start_flow)
 	_apply_safe_area.call_deferred()      # отступы под вырез/системные бары
 	get_viewport().size_changed.connect(_apply_safe_area)   # переприменять при готовности/ресайзе окна
 
@@ -862,12 +888,25 @@ func _on_rewarded(placement: String) -> void:
 	elif placement == "boss_time":
 		get_tree().paused = false
 		Game.boss_grant_time(15.0)   # +15 секунд, бой продолжается
+	elif placement == "boss_dmg":
+		Game.activate_boss_ad()      # ×2 урон до конца этого босса
+		if is_instance_valid(_boss_ad_btn):
+			_boss_ad_btn.visible = false
+			_boss_ad_btn.disabled = false
+		_punch(_boss_label)
+	elif placement == "offline_x2":
+		_collect_offline(2.0)        # ролик досмотрен — копилка удвоена
 	if _reward_btn: _reward_btn.disabled = false
 
 func _on_reward_failed(p: String) -> void:
 	if p == "boss_time":
 		get_tree().paused = false
 		_apply_boss_loss()           # реклама не вышла — засчитываем поражение
+	elif p == "boss_dmg":
+		if is_instance_valid(_boss_ad_btn):
+			_boss_ad_btn.disabled = false
+	elif p == "offline_x2":
+		_collect_offline(1.0)        # ролик не вышел — отдаём базовую копилку, не наказываем
 	if _reward_btn: _reward_btn.disabled = false
 
 
@@ -971,6 +1010,13 @@ func _build_listen_overlay() -> void:
 	_listen_hint.add_theme_font_size_override("font_size", F_SMALL)
 	_listen_hint.add_theme_color_override("font_color", MUTED)
 	vb.add_child(_listen_hint)
+	_listen_perm_btn = _settings_button("Разрешить крик", WOOD, true)
+	_listen_perm_btn.visible = false
+	_listen_perm_btn.pressed.connect(func():
+		if OS.get_name() == "Android":
+			OS.request_permission("RECORD_AUDIO")
+		_listen_perm_btn.visible = false)
+	vb.add_child(_listen_perm_btn)
 
 # Вид кнопки по состоянию: ширина/цвет заливки + текст
 func _punk_visual() -> void:
@@ -1036,8 +1082,10 @@ func _on_punk_up() -> void:
 	_punk_visual()
 
 func _start_mic_listen() -> void:
-	if OS.get_name() == "Android":
-		OS.request_permissions()     # RECORD_AUDIO по требованию
+	# разрешение НЕ дёргаем тут (ломало кульминацию) — софт-аск в приветствии Шута,
+	# а если отказал — кнопка «Разрешить крик» в этом оверлее
+	if is_instance_valid(_listen_perm_btn):
+		_listen_perm_btn.visible = not _mic_granted()
 	_punk_listening = true
 	_punk_listen_t = PUNK_LISTEN_SEC
 	_mic_sustain_t = 0.0
@@ -1194,6 +1242,8 @@ func _on_boss_changed(is_boss: bool, time_left: float) -> void:
 	_boss_prev_is_boss = is_boss
 	_boss_label.visible = is_boss
 	_pips.visible = not is_boss
+	if is_instance_valid(_boss_ad_btn):   # оффер ×2 урона: только на боссе, раз за босса
+		_boss_ad_btn.visible = is_boss and not Game.boss_ad_active
 	if is_boss:
 		_boss_label.text = "БОСС · %.0f с" % max(0.0, time_left)
 
@@ -1212,12 +1262,19 @@ func _refresh() -> void:
 			continue
 		var def: Dictionary = Game.ALLIES[aid]
 		var lvl: int = Game.ally_levels.get(aid, 0)
+		w.name.text = def.name
+		if not Game.hero_unlocked(aid):   # гастролёр ещё в пути (анлок через афишу)
+			w.level.text = "гастролёр в пути"
+			w.cost.text = "Прибудет\nДень %d" % Game.hero_arrival_day(aid)
+			w.cost.disabled = true
+			_card_hire_pulse(w, false)
+			continue
 		var n: int = _eff_n(Game.ally_max_affordable(aid))
 		var cost: float = Game.ally_cost_n(aid, max(1, n))
-		w.name.text = def.name
 		w.level.text = "ур. %d" % lvl if lvl > 0 else "не нанят"
 		w.cost.text = ("×%d\n%s" % [max(1, n), fmt(cost)]) if lvl > 0 else ("Нанять\n%s" % fmt(cost))
 		w.cost.disabled = Economy.gold < cost
+		_card_hire_pulse(w, lvl == 0 and Economy.gold >= cost)   # новый герой по карману — зовёт
 		# первый найм: оживляем силуэт → цвет + рамка героя
 		var recruited: bool = lvl > 0
 		if recruited != bool(w.get("recruited", false)):
@@ -1263,6 +1320,12 @@ func _process(delta: float) -> void:
 		if absf(_displayed_bells_top - float(Economy.bells)) < 1.0:
 			_displayed_bells_top = float(Economy.bells)
 		_bells_label.text = "%d" % int(round(_displayed_bells_top))
+
+	# ролловер афиши в полночь mid-session: без автопопапа, только бейдж-пульс
+	_daily_check_t += delta
+	if _daily_check_t >= 30.0:
+		_daily_check_t = 0.0
+		_refresh_daily_btn()
 
 	_process_punk(delta)
 	_process_parallax(delta)
@@ -1480,6 +1543,7 @@ func _on_boss_won() -> void:
 	var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
 	_fly_coins(_global_center(_enemy), _global_center(_gold_label), 20, GOLD, _gold_tex, _gold_icon)
 	_boss_beat("БОСС ПОВЕРЖЕН!", "→ %s · стадия %d" % [loc, Game.stage], GOLD)
+	_maybe_daily_intro()       # первое знакомство с афишей — на волне победы
 
 func _on_boss_failed() -> void:
 	get_tree().paused = true
@@ -1579,13 +1643,14 @@ func _show_prestige_nudge() -> void:
 	vb.add_theme_constant_override("separation", 0)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_nudge.add_child(vb)
+	var invest: bool = _has_affordable_upgrade()   # есть на что тратить → зови в дерево
 	var t := Label.new()
-	t.text = "Стена? Начни"
+	t.text = "Не получается пройти? Вложи" if invest else "Уперся? Начни"
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lab(t, F_SMALL, MUTED)
 	vb.add_child(t)
 	var t2 := Label.new()
-	t2.text = "▲ Новую Сказку!"
+	t2.text = "▲ Черепа в силу!" if invest else "▲ Новую Сказку!"
 	t2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lab(t2, F_SUB, GOLD)
 	if _header_font: t2.add_theme_font_override("font", _header_font)
@@ -1618,7 +1683,7 @@ func _dismiss_prestige_nudge() -> void:
 func _fade_transition(mid: Callable, caption: String = "", caption_col: Color = BLOOD) -> void:
 	if _fade_rect == null:
 		_fade_layer = CanvasLayer.new()
-		_fade_layer.layer = 70
+		_fade_layer.layer = 95   # выше всех окон (кроме лоадскрина 100)
 		_fade_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 		add_child(_fade_layer)
 		_fade_rect = ColorRect.new()
@@ -1639,16 +1704,16 @@ func _fade_transition(mid: Callable, caption: String = "", caption_col: Color = 
 	_fade_label.add_theme_color_override("font_color", caption_col)
 	_fade_label.modulate.a = 0.0
 	get_tree().paused = true
+	# последовательный твин (chain+set_parallel в Godot взаимно гасятся — из-за
+	# этого удержание черноты схлопывалось и фейд выглядел отсутствующим)
 	var t := _fade_rect.create_tween()
-	t.set_parallel(true)
-	t.tween_property(_fade_rect, "color:a", 1.0, 0.22)
-	t.tween_property(_fade_label, "modulate:a", 1.0, 0.22)
-	t.chain().tween_callback(func(): if mid.is_valid(): mid.call())
-	t.chain().tween_interval(0.35)
-	t.chain().set_parallel(true)
-	t.tween_property(_fade_rect, "color:a", 0.0, 0.30)
-	t.tween_property(_fade_label, "modulate:a", 0.0, 0.22)
-	t.chain().tween_callback(func():
+	t.tween_property(_fade_rect, "color:a", 1.0, 0.25)
+	t.parallel().tween_property(_fade_label, "modulate:a", 1.0, 0.25)
+	t.tween_callback(func(): if mid.is_valid(): mid.call())   # смена стейта — в темноте
+	t.tween_interval(0.55)                                     # держим — подпись читается
+	t.tween_property(_fade_rect, "color:a", 0.0, 0.35)
+	t.parallel().tween_property(_fade_label, "modulate:a", 0.0, 0.30)
+	t.tween_callback(func():
 		if is_instance_valid(_fade_rect): _fade_rect.visible = false
 		get_tree().paused = false)
 
@@ -1666,8 +1731,28 @@ func _build_prestige() -> void:
 		_prestige_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		_prestige_btn.position = Vector2(12, 80)
 		_prestige_btn.size = Vector2(96, 50)
+	# Реклама «×2 урон этому боссу» — справа под «Кладом», видна только на боссе
+	_boss_ad_btn = Button.new()
+	_boss_ad_btn.text = "▶ ×2 урон"
+	_boss_ad_btn.add_theme_font_size_override("font_size", F_SMALL)
+	_boss_ad_btn.focus_mode = Control.FOCUS_NONE
+	_style_button(_boss_ad_btn, Color("#2a0f14"), BLOOD, Color("#ff5a4f"))
+	_boss_ad_btn.visible = false
+	_boss_ad_btn.pressed.connect(_on_boss_ad_pressed)
+	if is_instance_valid(_arena):
+		_arena.add_child(_boss_ad_btn)
+		_boss_ad_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		_boss_ad_btn.offset_left = -104
+		_boss_ad_btn.offset_top = 136
+		_boss_ad_btn.offset_right = -12
+		_boss_ad_btn.offset_bottom = 184
 	_build_prestige_panel()
 	_refresh_prestige()
+
+func _on_boss_ad_pressed() -> void:
+	if is_instance_valid(_boss_ad_btn):
+		_boss_ad_btn.disabled = true
+	Monetization.show_rewarded("boss_dmg")
 
 func _build_prestige_panel() -> void:
 	_prestige_layer = CanvasLayer.new()
@@ -1682,7 +1767,7 @@ func _build_prestige_panel() -> void:
 	dim.color = Color(0, 0, 0, 0.7)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.gui_input.connect(func(e: InputEvent):
-		if e is InputEventMouseButton and e.pressed:
+		if e is InputEventMouseButton and e.pressed and _prestige_lock <= 0:
 			_close_prestige())
 	_prestige_panel.add_child(dim)
 	var cc := CenterContainer.new()
@@ -1737,9 +1822,9 @@ func _build_prestige_panel() -> void:
 	_prestige_step1_go = _settings_button("Новая сказка", WOOD, true)
 	_prestige_step1_go.pressed.connect(_prestige_goto_step2)
 	_prestige_step1.add_child(_prestige_step1_go)
-	var close1 := _settings_button("Закрыть", SURF, false)
-	close1.pressed.connect(_close_prestige)
-	_prestige_step1.add_child(close1)
+	_prestige_step1_close = _settings_button("Закрыть", SURF, false)
+	_prestige_step1_close.pressed.connect(_close_prestige)
+	_prestige_step1.add_child(_prestige_step1_close)
 
 	# ========== ШАГ 2: распределение черепов ==========
 	_prestige_step2 = VBoxContainer.new()
@@ -1840,13 +1925,25 @@ func _refresh_prestige() -> void:
 	_set_bells_display(int(round(_displayed_bells)))
 	if is_instance_valid(_prestige_pending_lbl):
 		if can:
-			_prestige_pending_lbl.visible = false   # объяснение в keep-тексте, счётчик выше
+			var payout: int = Game.reset_payout_preview()
+			_prestige_pending_lbl.visible = payout > 0
+			_prestige_pending_lbl.text = "Начни Новую Сказку и получи: +%d черепов" % payout
 		else:
 			_prestige_pending_lbl.visible = true
 			_prestige_pending_lbl.text = "Копи Черепа с боссов. «Новая сказка» откроется со стадии %d." % Balance.PRESTIGE_UNLOCK_STAGE
 	if is_instance_valid(_prestige_step1_go):
-		_prestige_step1_go.disabled = not can
-		_prestige_step1_go.text = "Новая Сказка" if can else "Открой стадию %d" % Balance.PRESTIGE_UNLOCK_STAGE
+		if _prestige_lock > 0:   # первый показ: кнопки заблокированы с отсчётом
+			_prestige_step1_go.disabled = true
+			_prestige_step1_go.text = "Новая Сказка (%d)" % _prestige_lock
+			if is_instance_valid(_prestige_step1_close):
+				_prestige_step1_close.disabled = true
+				_prestige_step1_close.text = "Осмотрись… %d" % _prestige_lock
+		else:
+			_prestige_step1_go.disabled = not can
+			_prestige_step1_go.text = "Новая Сказка" if can else "Открой стадию %d" % Balance.PRESTIGE_UNLOCK_STAGE
+			if is_instance_valid(_prestige_step1_close):
+				_prestige_step1_close.disabled = false
+				_prestige_step1_close.text = "Закрыть"
 	if is_instance_valid(_prestige_summary_lbl):
 		_prestige_summary_lbl.text = "Сейчас: ×%s золото · ×%s DPS · ×%s тап" % [
 			_fmt_mult(Game.prestige_gold_mult()), _fmt_mult(Game.prestige_dps_mult()), _fmt_mult(Game.prestige_tap_mult())]
@@ -2001,7 +2098,7 @@ func _show_prestige_leftover() -> void:
 		_do_prestige_now()
 		return
 	if is_instance_valid(_prestige_leftover_lbl):
-		_prestige_leftover_lbl.text = "Ещё остались Черепа: %d — их можно вложить Вечные Усиления." % Economy.bells
+		_prestige_leftover_lbl.text = "Ещё остались Черепа: %d — их можно вложить в Вечные Усиления." % Economy.bells
 	_prestige_leftover.visible = true
 	_box_pop(_prestige_leftover_box)
 
@@ -2099,6 +2196,369 @@ func _maybe_prestige_intro() -> void:
 	_prestige_intro_seen = true
 	_save_settings()
 	_open_prestige.call_deferred()
+	_run_prestige_lock.call_deferred()   # первый показ — 5 сек оглядеться, кнопки с отсчётом
+
+# Отсчёт блокировки кнопок при первом автопоказе Сказки (защита от случайного тапа)
+func _run_prestige_lock() -> void:
+	_prestige_lock = 5
+	while _prestige_lock > 0:
+		_refresh_prestige()
+		await get_tree().create_timer(1.0, true).timeout   # тикает и в паузе
+		_prestige_lock -= 1
+	_refresh_prestige()
+
+
+# --- Старт-флоу и разрешения ----------------------------------------------------
+# Цепочка окон после лоадскрина: приветствие Шута → туториал / оффлайн → афиша.
+func _start_flow() -> void:
+	if not _tut_done:
+		if not _welcome_seen:
+			_show_welcome()
+		else:
+			_start_tutorial()
+		return
+	if Game.last_offline_income > 0.0:
+		_show_offline_popup(Game.last_offline_income)   # афиша чейнится из попапа
+	else:
+		get_tree().create_timer(0.6).timeout.connect(_maybe_show_daily)
+
+func _mic_granted() -> bool:
+	if OS.get_name() != "Android":
+		return true
+	return OS.get_granted_permissions().has("android.permission.RECORD_AUDIO")
+
+func _push_granted() -> bool:
+	if OS.get_name() != "Android":
+		return true
+	return OS.get_granted_permissions().has("android.permission.POST_NOTIFICATIONS")
+
+# Приветствие Шута + софт-аск микрофона (первый запуск, до туториала)
+func _show_welcome() -> void:
+	_welcome_seen = true
+	_save_settings()
+	_show_char_dialog(
+		"Я — Шут, хозяин Балагана! Тут всё держится на крике.\nРазрешишь микрофон — запустим ПАНК-РОК твоим воплем «ХОЙ!»",
+		"Разрешить крик", "Буду молчать",
+		func():
+			if OS.get_name() == "Android":
+				OS.request_permission("RECORD_AUDIO")
+			get_tree().create_timer(0.7).timeout.connect(_start_tutorial),
+		func():
+			get_tree().create_timer(0.3).timeout.connect(_start_tutorial))
+
+# Софт-аск пушей: после первого подарка афиши (повтор один раз после Дня 3)
+func _maybe_push_ask() -> void:
+	if OS.get_name() != "Android" or _push_granted() or _push_asks >= 2:
+		return
+	if Game.daily_claims == 1 or (Game.daily_claims >= 3 and _push_asks == 1):
+		_push_asks += 1
+		_save_settings()
+		_show_char_dialog(
+			"Свистну, когда новые подарки прибудут!",
+			"Свисти!", "Не надо",
+			func():
+				# короткое имя Godot не знает — нужен полный manifest-нейм
+				OS.request_permission("android.permission.POST_NOTIFICATIONS"),
+			func(): pass)
+
+# Модальный диалог с портретом Шута и двумя кнопками
+func _show_char_dialog(text: String, yes_t: String, no_t: String, on_yes: Callable, on_no: Callable) -> void:
+	if is_instance_valid(_char_layer):
+		_char_layer.queue_free()
+	_char_layer = CanvasLayer.new()
+	_char_layer.layer = 66
+	_char_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_char_layer)
+	var panel := Control.new()
+	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_char_layer.add_child(panel)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.7)   # закрывается только кнопками — решение осознанное
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	panel.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(cc)
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 20, 2, 22))
+	box.custom_minimum_size = Vector2(560, 0)
+	cc.add_child(box)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 14)
+	box.add_child(vb)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 14)
+	vb.add_child(hb)
+	var pf := Panel.new()
+	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, GOLD, 12, 2, 0))
+	pf.custom_minimum_size = Vector2(128, 128)
+	pf.clip_contents = true
+	hb.add_child(pf)
+	var tex: Texture2D = _ally_tex.get("jester")
+	if tex:
+		var tr := TextureRect.new()
+		tr.texture = tex
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+		tr.offset_left = 3; tr.offset_top = 3; tr.offset_right = -3; tr.offset_bottom = -3
+		pf.add_child(tr)
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_lab(lbl, F_BODY, TXT)
+	hb.add_child(lbl)
+	var yes := _settings_button(yes_t, WOOD, true)
+	yes.pressed.connect(func():
+		_pop_close_free(panel, box)
+		_char_layer = null
+		if on_yes.is_valid(): on_yes.call())
+	vb.add_child(yes)
+	var no := _settings_button(no_t, SURF, false)
+	no.pressed.connect(func():
+		_pop_close_free(panel, box)
+		_char_layer = null
+		if on_no.is_valid(): on_no.call())
+	vb.add_child(no)
+	_pop_open(panel, box)
+
+
+# --- «Афиша дня» ---------------------------------------------------------------
+func _build_daily() -> void:
+	# кнопка «ДЕНЬ N» в правой колонке топбара, под шестерёнкой
+	_daily_btn = Button.new()
+	_daily_btn.focus_mode = Control.FOCUS_NONE
+	_daily_btn.add_theme_font_size_override("font_size", F_SMALL)
+	_daily_btn.custom_minimum_size = Vector2(92, 42)
+	_daily_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_style_button(_daily_btn, WOOD, WOOD_BORDER, GOLD)
+	_daily_btn.pressed.connect(_open_daily)
+	var rc := get_node_or_null("%RightCol")
+	if rc: rc.add_child(_daily_btn)
+
+	_daily_layer = CanvasLayer.new()
+	_daily_layer.layer = 57
+	_daily_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_daily_layer)
+	_daily_panel = Control.new()
+	_daily_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_daily_panel.visible = false
+	_daily_layer.add_child(_daily_panel)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.7)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and e.pressed:
+			_close_daily())
+	_daily_panel.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_daily_panel.add_child(cc)
+	_daily_box = PanelContainer.new()
+	_daily_box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 20, 2, 22))
+	_daily_box.custom_minimum_size = Vector2(560, 0)
+	cc.add_child(_daily_box)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	_daily_box.add_child(vb)
+
+	var title := Label.new()
+	title.text = "Афиша"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(title, F_TITLE, GOLD)
+	if _header_font: title.add_theme_font_override("font", _header_font)
+	vb.add_child(title)
+	var flavor := Label.new()
+	flavor.text = "Заходи каждый день за новыми подарками!"
+	flavor.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	flavor.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(flavor, F_SMALL, MUTED)
+	vb.add_child(flavor)
+
+	# сетка: фиксированные квадраты 3×2 (не тянутся) + широкая полоса Гранд-финала
+	_daily_slots.clear()
+	for row_days in [[1, 2, 3], [4, 5, 6]]:
+		var hb := HBoxContainer.new()
+		hb.add_theme_constant_override("separation", 12)
+		hb.alignment = BoxContainer.ALIGNMENT_CENTER
+		vb.add_child(hb)
+		for d in row_days:
+			hb.add_child(_daily_slot(d, false))
+	vb.add_child(_daily_slot(7, true))
+
+	var hint := Label.new()
+	hint.text = "Награды растут вместе с силой труппы."
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(hint, F_SMALL, MUTED)
+	vb.add_child(hint)
+
+	_daily_claim_btn = _settings_button("Забрать", WOOD, true)
+	_daily_claim_btn.pressed.connect(_on_daily_claim)
+	vb.add_child(_daily_claim_btn)
+	var close := _settings_button("Закрыть", SURF, false)
+	close.pressed.connect(_close_daily)
+	vb.add_child(close)
+
+func _daily_slot(d: int, wide: bool) -> Control:
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _flat(SURF, SURF_BORDER, 12, 2, 8))
+	# фиксированные размеры — сетка не «разъезжается»
+	frame.custom_minimum_size = Vector2(500, 96) if wide else Vector2(158, 172)
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var ic := TextureRect.new()
+	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.custom_minimum_size = Vector2(64, 64) if wide else Vector2(46, 46)
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var day_lbl := Label.new()
+	day_lbl.text = "Гранд-финал" if d == 7 else "День %d" % d
+	day_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(day_lbl, F_SMALL, GOLD if d == 7 else MUTED)
+	if d == 7 and _header_font: day_lbl.add_theme_font_override("font", _header_font)
+	var val := Label.new()
+	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	val.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(val, F_SMALL, TXT)
+	val.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if wide:
+		var hb := HBoxContainer.new()
+		hb.add_theme_constant_override("separation", 14)
+		frame.add_child(hb)
+		hb.add_child(ic)
+		var tv := VBoxContainer.new()
+		tv.add_theme_constant_override("separation", 2)
+		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		day_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		val.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		tv.add_child(day_lbl)
+		tv.add_child(val)
+		hb.add_child(tv)
+	else:
+		var vb := VBoxContainer.new()
+		vb.add_theme_constant_override("separation", 4)
+		frame.add_child(vb)
+		vb.add_child(day_lbl)
+		vb.add_child(ic)
+		vb.add_child(val)
+	_daily_slots[d] = {"frame": frame, "val": val, "day_lbl": day_lbl, "icon": ic}
+	return frame
+
+# Живые числа + состояния слотов (пересчёт при каждом открытии/клейме)
+func _refresh_daily() -> void:
+	if _daily_slots.is_empty():
+		return
+	var cur: int = Game.daily_day
+	var can: bool = Game.daily_available()
+	for d in _daily_slots:
+		var s: Dictionary = _daily_slots[d]
+		if not (is_instance_valid(s.frame) and is_instance_valid(s.val)):
+			continue
+		var r: Dictionary = Game.daily_reward_preview(d)
+		var parts: PackedStringArray = []
+		if String(r.hero) != "":
+			parts.append("%s прибывает!" % Game.ALLIES[r.hero].name)
+		if float(r.gold) > 0.0:
+			parts.append("+%s" % fmt(float(r.gold)))
+		if int(r.bells) > 0:
+			parts.append("+%d черепов" % int(r.bells))
+		s.val.text = "\n".join(parts)
+		# иконка: портрет гастролёра > череп > золото
+		if is_instance_valid(s.icon):
+			if String(r.hero) != "" and _ally_tex.has(String(r.hero)):
+				s.icon.texture = _ally_tex[String(r.hero)]
+			elif int(r.bells) > 0:
+				s.icon.texture = _skull_tex
+			else:
+				s.icon.texture = _gold_tex
+		var claimed: bool = d < cur
+		var current: bool = d == cur
+		s.frame.add_theme_stylebox_override("panel", _flat(SURF, GOLD if current else SURF_BORDER, 12, 3 if current else 2, 8))
+		s.frame.modulate = Color(0.55, 0.55, 0.55) if claimed else (Color.WHITE if current else Color(0.85, 0.85, 0.85))
+	if is_instance_valid(_daily_claim_btn):
+		_daily_claim_btn.disabled = not can
+		_daily_claim_btn.text = "Забрать" if can else "Уже забрал — приходи завтра"
+
+func _refresh_daily_btn() -> void:
+	if not is_instance_valid(_daily_btn):
+		return
+	_daily_btn.text = "ДЕНЬ %d" % Game.daily_day
+	_daily_btn.visible = _tut_done and Game.daily_claims > 0 or _daily_intro_seen
+	var avail: bool = Game.daily_available() and _daily_intro_seen
+	if avail:
+		if _daily_btn_tw == null or not _daily_btn_tw.is_valid():
+			_daily_btn_tw = _daily_btn.create_tween().set_loops()
+			_daily_btn_tw.tween_property(_daily_btn, "modulate", Color(1.4, 1.25, 0.8), 0.55).set_trans(Tween.TRANS_SINE)
+			_daily_btn_tw.tween_property(_daily_btn, "modulate", Color(1, 1, 1), 0.55).set_trans(Tween.TRANS_SINE)
+	else:
+		if _daily_btn_tw and _daily_btn_tw.is_valid():
+			_daily_btn_tw.kill()
+		_daily_btn_tw = null
+		_daily_btn.modulate = Color(1, 1, 1)
+
+func _open_daily() -> void:
+	if not is_instance_valid(_daily_panel) or _daily_panel.visible:
+		return
+	_refresh_daily()
+	_pop_open(_daily_panel, _daily_box)   # без паузы: полёты наград живут на Main
+
+func _close_daily() -> void:
+	if not is_instance_valid(_daily_panel):
+		return
+	_pop_close(_daily_panel, _daily_box)
+
+func _on_daily_claim() -> void:
+	var r: Dictionary = Game.claim_daily()
+	if r.is_empty():
+		return
+	if float(r.gold) > 0.0 and is_instance_valid(_gold_label):
+		_fly_coins(_global_center(_daily_claim_btn), _global_center(_gold_label), 14, GOLD, _gold_tex, _gold_icon, 40)
+	if int(r.bells) > 0 and is_instance_valid(_skull_icon_top):
+		_fly_coins(_global_center(_daily_claim_btn), _global_center(_skull_icon_top), 8, Color("#cdbfd6"), _skull_tex, _skull_icon_top, 41)
+	if String(r.hero) != "":
+		_build_cards()   # гастролёр прибыл — карточка оживает
+		_refresh()
+		var w: Dictionary = _card_widgets.get(String(r.hero), {})
+		if w.has("frame"):
+			_frame_pop(w.frame)
+	_refresh_daily()
+	_refresh_daily_btn()
+	get_tree().create_timer(1.0).timeout.connect(_close_daily)
+	get_tree().create_timer(1.8).timeout.connect(_maybe_push_ask)   # пуш-аск после подарка
+
+# Автопоказ: старт сессии / после оффлайн-попапа. Не дёргает во время туториала,
+# босса, других окон; раз за сессию.
+func _maybe_show_daily() -> void:
+	if not is_instance_valid(_daily_panel) or _daily_panel.visible:
+		return
+	if not _tut_done or _tut_step >= 0:
+		return
+	if not _daily_intro_seen:
+		return   # знакомство — только после первого босса (см. _on_boss_won)
+	if _daily_shown_session or not Game.daily_available():
+		return
+	if Game.is_boss or get_tree().paused:
+		return
+	_daily_shown_session = true
+	_open_daily()
+
+# Первое знакомство: после первой победы над боссом
+func _maybe_daily_intro() -> void:
+	if _daily_intro_seen or not _tut_done:
+		return
+	if not Game.daily_available():
+		return
+	_daily_intro_seen = true
+	_daily_shown_session = true
+	_save_settings()
+	_refresh_daily_btn()
+	get_tree().create_timer(1.5).timeout.connect(_open_daily)   # после баннера победы
 
 
 # --- Туториал первой сессии --------------------------------------------------
@@ -2320,14 +2780,23 @@ func _load_settings() -> void:
 	if cf.load(SETTINGS_PATH) == OK:
 		_music_on = bool(cf.get_value("audio", "music_on", true))
 		_reduce_fx = bool(cf.get_value("video", "reduce_fx", false))
+		_notify_on = bool(cf.get_value("flags", "notify_on", true))
+		Notify.enabled = _notify_on
 		_prestige_intro_seen = bool(cf.get_value("flags", "prestige_intro_seen", false))
+		_daily_intro_seen = bool(cf.get_value("flags", "daily_intro_seen", false))
+		_welcome_seen = bool(cf.get_value("flags", "welcome_seen", false))
+		_push_asks = int(cf.get_value("flags", "push_asks", 0))
 		_tut_done = bool(cf.get_value("flags", "tut_done", false))
 
 func _save_settings() -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("audio", "music_on", _music_on)
 	cf.set_value("video", "reduce_fx", _reduce_fx)
+	cf.set_value("flags", "notify_on", _notify_on)
 	cf.set_value("flags", "prestige_intro_seen", _prestige_intro_seen)
+	cf.set_value("flags", "daily_intro_seen", _daily_intro_seen)
+	cf.set_value("flags", "welcome_seen", _welcome_seen)
+	cf.set_value("flags", "push_asks", _push_asks)
 	cf.set_value("flags", "tut_done", _tut_done)
 	cf.save(SETTINGS_PATH)
 
@@ -2387,6 +2856,7 @@ func _build_settings() -> void:
 
 	vb.add_child(_settings_toggle_row("Музыка", _music_on, _on_music_toggled))
 	vb.add_child(_settings_toggle_row("Меньше эффектов", _reduce_fx, _on_reduce_toggled))
+	vb.add_child(_settings_toggle_row("Уведомления", _notify_on, _on_notify_toggled))
 
 	vb.add_child(_settings_sep())
 	var priv := _settings_button("Политика конфиденциальности", SURF, false)
@@ -2400,6 +2870,11 @@ func _build_settings() -> void:
 	var dev := _settings_button("⚡ [ТЕСТ] Прокачать до 50 стадии", WOOD, true)
 	dev.pressed.connect(_on_dev_boost_pressed)
 	vb.add_child(dev)
+	var tlm := _settings_button("[ТЕСТ] Скопировать лог баланса", SURF, false)
+	tlm.pressed.connect(func():
+		DisplayServer.clipboard_set(Game.telemetry_text())
+		tlm.text = "Лог в буфере — вставь в чат/файл")
+	vb.add_child(tlm)
 	var close := _settings_button("Закрыть", WOOD, true)
 	close.pressed.connect(_close_settings)
 	vb.add_child(close)
@@ -2474,6 +2949,13 @@ func _on_reduce_toggled(on: bool) -> void:
 	_reduce_fx = on
 	if on and is_instance_valid(_bgrect):
 		_bgrect.position = Vector2.ZERO   # параллакс выключаем сразу
+	_save_settings()
+
+func _on_notify_toggled(on: bool) -> void:
+	_notify_on = on
+	Notify.enabled = on
+	if not on:
+		Notify.cancel_all()
 	_save_settings()
 
 func _on_reset_pressed() -> void:
@@ -2735,20 +3217,65 @@ func _show_offline_popup(amount: float) -> void:
 	a.text = "+%s золота" % fmt(amount)
 	a.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lab(a, F_TITLE, GOLD)
+	# ×2 за рекламу — главный оффлайн-плейсмент; обычный «Забрать» — вторичная кнопка
+	_offline_amt = amount
+	_offline_root = root
+	_offline_panel = panel
+	var x2 := Button.new()
+	x2.text = "▶ Забрать ×2"
+	x2.add_theme_font_size_override("font_size", F_BODY)
+	x2.custom_minimum_size = Vector2(300, 64)
+	x2.focus_mode = Control.FOCUS_NONE
+	_style_button(x2, WOOD, WOOD_BORDER, GOLD)
 	var ok := Button.new()
 	ok.text = "Забрать"
-	ok.add_theme_font_size_override("font_size", F_BODY)
-	ok.custom_minimum_size = Vector2(220, 64)
+	ok.add_theme_font_size_override("font_size", F_SUB)
+	ok.custom_minimum_size = Vector2(220, 56)
 	ok.focus_mode = Control.FOCUS_NONE
-	_style_button(ok, WOOD, WOOD_BORDER, GOLD)
+	_style_button(ok, SURF, SURF_BORDER, TXT)
+	x2.pressed.connect(func():
+		x2.disabled = true
+		ok.disabled = true
+		Monetization.show_rewarded("offline_x2"))
 	ok.pressed.connect(func():
-		Economy.add_gold(amount)   # золото начисляется только сейчас
-		_fly_coins(_global_center(ok), _global_center(_gold_label), 18, GOLD, _gold_tex, _gold_icon)
-		_pop_close_free(root, panel))
-	vb.add_child(t); vb.add_child(a); vb.add_child(ok)
+		_collect_offline(1.0))
+	vb.add_child(t); vb.add_child(a); vb.add_child(x2); vb.add_child(ok)
 	panel.add_child(vb)
 	_pop_open(root, panel)
 
+# Забор оффлайн-дохода (mult=2.0 после ролика) + цепочка на афишу
+func _collect_offline(mult: float) -> void:
+	if _offline_amt <= 0.0:
+		return
+	Economy.add_gold(_offline_amt * mult)
+	_offline_amt = 0.0
+	if is_instance_valid(_gold_label):
+		_fly_coins(_global_center(_offline_panel) if is_instance_valid(_offline_panel) else Vector2(360, 640),
+			_global_center(_gold_label), 18, GOLD, _gold_tex, _gold_icon)
+	if is_instance_valid(_offline_root):
+		_pop_close_free(_offline_root, _offline_panel)
+	_offline_root = null
+	_offline_panel = null
+	get_tree().create_timer(1.0).timeout.connect(_maybe_show_daily)
+
+
+# Дыхание карточки, когда доступен найм нового героя (мягкий зов тратить)
+func _card_hire_pulse(w: Dictionary, on: bool) -> void:
+	var f = w.get("frame")
+	if not is_instance_valid(f):
+		return
+	var tw = w.get("pulse")
+	if on:
+		if tw == null or not (tw as Tween).is_valid():
+			var t: Tween = (f as Control).create_tween().set_loops()   # привязан к карточке
+			t.tween_property(f, "modulate", Color(1.3, 1.25, 1.05), 0.55).set_trans(Tween.TRANS_SINE)
+			t.tween_property(f, "modulate", Color(1, 1, 1), 0.55).set_trans(Tween.TRANS_SINE)
+			w["pulse"] = t
+	else:
+		if tw != null and (tw as Tween).is_valid():
+			(tw as Tween).kill()
+			(f as Control).modulate = Color(1, 1, 1)
+		w["pulse"] = null
 
 # Отклик кнопки на нажатие — быстрый «панч» масштаба
 func _punch(n: Control) -> void:

@@ -19,6 +19,7 @@ signal punk_charge_changed(ratio: float)           # заряд панк-рок�
 signal punk_state_changed(active: bool, time_left: float)  # режим вкл/выкл + остаток
 signal prestige_changed                            # черепа/дерево обновились
 signal boss_bells_awarded(amount: int)             # черепа реально начислены с босса (для полёта)
+signal daily_changed                               # афиша дня: клейм/смена дня
 
 # --- Стартовая труппа (MVP). Полный список — в LORE.md. ---------------------
 # atk = интервал атаки в секундах (свой ритм у каждого героя)
@@ -63,7 +64,29 @@ var punk_time_left: float = 0.0
 # --- Prestige ----------------------------------------------------------------
 const SAVE_VERSION: int = 1
 var meta_levels: Dictionary = {}       # node_id -> int (дерево «Сказаний»)
-var bells_earned_total: float = 0.0    # сколько бубенцов уже зачтено (разностная модель)
+var bells_earned_total: float = 0.0    # сколько черепов-целей уже учтено (разностная модель)
+var bells_pending: float = 0.0         # отложенные 40% рекордов — зачисляются при сбросе
+var run_peak_stage: int = 1            # глубина текущего забега (для «гастрольного бонуса»)
+var boss_ad_active: bool = false       # реклама «×2 урон боссу» активна на этом боссе
+
+# --- «Афиша дня» ---------------------------------------------------------------
+var daily_day: int = 1                 # какой день цикла (1..7) ждёт клейма
+var daily_last_day_id: int = -1        # id суток (граница 04:00) последнего клейма
+var daily_last_unix: int = 0           # анти-«перевод часов назад»
+var daily_claims: int = 0              # всего клеймов (дни входа) — от него прибытие гастролёров
+
+# --- Телеметрия баланса [ТЕСТ] ------------------------------------------------
+# CSV-лог кривой прогресса для калибровки симулятора (см. BALANCE.md).
+# Строка на каждую пройденную стадию + строки-события. Копируется из настроек.
+const TLM_PATH := "user://balance_log.csv"
+const TLM_HEADER := "stage;t_sec;dps;tap_dmg;gold;hero_lvls;tap_lvl;punk_pct;bells;prestiges;fails;ads\n"
+var _tlm_text: String = ""
+var _tlm_dirty: bool = false
+var _tlm_t: float = 0.0          # активное игровое время (пауза не тикает)
+var _tlm_punk_t: float = 0.0     # сколько из него шёл панк-раж
+var _tlm_prestiges: int = 0
+var _tlm_boss_fails: int = 0
+var _tlm_ads: int = 0
 
 
 func _ready() -> void:
@@ -72,15 +95,65 @@ func _ready() -> void:
 	for id in Balance.PRESTIGE_ORDER:
 		meta_levels[id] = 0
 	load_game()
+	_tlm_init()
 	_spawn_enemy()
 	_apply_offline(_pending_offline_time)   # после спавна — корректный idle-доход
+	Monetization.rewarded_completed.connect(_on_tlm_ad)
 	set_process(true)
 
 
+func _tlm_init() -> void:
+	if FileAccess.file_exists(TLM_PATH):
+		var f := FileAccess.open(TLM_PATH, FileAccess.READ)
+		if f:
+			_tlm_text = f.get_as_text()
+			f.close()
+	if _tlm_text.is_empty():
+		_tlm_text = TLM_HEADER
+	_tlm_event("SESSION unix=%d stage=%d max=%d" % [int(Time.get_unix_time_from_system()), stage, max_stage])
+
+func _tlm_event(name: String) -> void:
+	_tlm_text += "EVENT;%s;t=%d\n" % [name, int(_tlm_t)]
+	_tlm_dirty = true
+
+# Строка кривой: пишется на каждой пройденной стадии
+func _tlm_row() -> void:
+	var hl: int = 0
+	for id in ALLY_ORDER:
+		hl += int(ally_levels.get(id, 0))
+	var up: float = (_tlm_punk_t / _tlm_t * 100.0) if _tlm_t > 0.0 else 0.0
+	_tlm_text += "%d;%d;%s;%s;%s;%d;%d;%.0f;%d;%d;%d;%d\n" % [
+		stage, int(_tlm_t), String.num_scientific(total_dps()), String.num_scientific(tap_damage()),
+		String.num_scientific(Economy.gold),
+		hl, tap_level, up, Economy.bells, _tlm_prestiges, _tlm_boss_fails, _tlm_ads]
+	_tlm_dirty = true
+
+func _tlm_flush() -> void:
+	if not _tlm_dirty:
+		return
+	var f := FileAccess.open(TLM_PATH, FileAccess.WRITE)
+	if f:
+		f.store_string(_tlm_text)
+		f.close()
+		_tlm_dirty = false
+
+# Полный лог (для кнопки «Скопировать» в настройках)
+func telemetry_text() -> String:
+	_tlm_flush()
+	return _tlm_text
+
+func _on_tlm_ad(placement: String) -> void:
+	_tlm_ads += 1
+	_tlm_event("AD %s s%d" % [placement, stage])
+
+
 func _notification(what: int) -> void:
-	# Сохраняемся при сворачивании/выходе, чтобы не терять прогресс
+	# Сохраняемся при сворачивании/выходе, чтобы не терять прогресс; там же — план пушей
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		save_game()
+		Notify.on_app_hide()
+	elif what == NOTIFICATION_APPLICATION_RESUMED or what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		Notify.cancel_all()   # вернулся — запланированное неактуально
 
 
 # --- Производные величины (формулы) -----------------------------------------
@@ -122,6 +195,8 @@ func ally_cost_n(id: String, n: int) -> float:
 	return def.base_cost * pow(g, lvl) * (pow(g, n) - 1.0) / (g - 1.0)
 
 func ally_max_affordable(id: String) -> int:
+	if not hero_unlocked(id):
+		return 0
 	var def: Dictionary = ALLIES[id]
 	var g: float = def.growth
 	var lvl: int = ally_levels.get(id, 0)
@@ -131,7 +206,7 @@ func ally_max_affordable(id: String) -> int:
 	return int(floor(log(1.0 + Economy.gold * (g - 1.0) / c0) / log(g)))
 
 func buy_ally_n(id: String, n: int) -> bool:
-	if not ALLIES.has(id) or n <= 0:
+	if not ALLIES.has(id) or n <= 0 or not hero_unlocked(id):
 		return false
 	if Economy.spend_gold(ally_cost_n(id, n)):
 		ally_levels[id] = int(ally_levels.get(id, 0)) + n
@@ -187,6 +262,71 @@ func punk_speed_mult() -> float:
 
 func punk_gold_mult() -> float:
 	return Balance.PUNK_GOLD_MULT if punk_active else 1.0
+
+# --- «Афиша дня»: ежедневная награда + прибытие гастролёров -------------------
+func _local_day_id(unix: int) -> int:
+	var bias: int = Time.get_time_zone_from_system().get("bias", 0)   # минуты от UTC
+	return int(floor(float(unix + bias * 60 - Balance.DAILY_BOUNDARY_HOUR * 3600) / 86400.0))
+
+func daily_available() -> bool:
+	var now: int = int(Time.get_unix_time_from_system())
+	if now < daily_last_unix:          # часы перевели назад — ждём реального времени
+		return false
+	return _local_day_id(now) > daily_last_day_id
+
+# Живые числа для слота дня d (пересчитываются от текущего прогресса)
+func daily_reward_preview(d: int) -> Dictionary:
+	var out := {"gold": 0.0, "bells": 0, "hero": ""}
+	if Balance.DAILY_GOLD_MINUTES.has(d):
+		var mins: int = Balance.DAILY_GOLD_MINUTES[d]
+		var kills: int = Balance.DAILY_GOLD_KILLS[d]
+		out.gold = maxf(idle_gold_per_sec() * mins * 60.0, _enemy_gold() * kills)
+	if Balance.DAILY_SKULL_PCT.has(d):
+		out.bells = maxi(int(Balance.DAILY_SKULL_MIN[d]), int(float(prestige_target_bells()) * float(Balance.DAILY_SKULL_PCT[d])))
+	for id in Balance.HERO_ARRIVAL_DAY:   # гастролёр в слоте — только первый круг
+		if int(Balance.HERO_ARRIVAL_DAY[id]) == d and daily_claims < d:
+			out.hero = id
+	return out
+
+func claim_daily() -> Dictionary:
+	if not daily_available():
+		return {}
+	var r: Dictionary = daily_reward_preview(daily_day)
+	if float(r.gold) > 0.0:
+		Economy.add_gold(float(r.gold))
+	if int(r.bells) > 0:
+		Economy.add_bells(int(r.bells))
+	var now: int = int(Time.get_unix_time_from_system())
+	daily_last_day_id = _local_day_id(now)
+	daily_last_unix = now
+	daily_claims += 1
+	daily_day = daily_day % 7 + 1
+	_tlm_event("DAILY claim#%d hero=%s" % [daily_claims, String(r.hero)])
+	daily_changed.emit()
+	stats_changed.emit()   # мог разлочиться гастролёр — обновить кнопки
+	save_game()
+	return r
+
+# Гастролёры: Берсерк/Некромант прибывают на N-й день входа
+func hero_unlocked(id: String) -> bool:
+	if not Balance.HERO_ARRIVAL_DAY.has(id):
+		return true
+	if int(ally_levels.get(id, 0)) > 0:
+		return true   # уже в труппе (миграция сейвов до появления афиши)
+	return daily_claims >= int(Balance.HERO_ARRIVAL_DAY[id])
+
+func hero_arrival_day(id: String) -> int:
+	return int(Balance.HERO_ARRIVAL_DAY.get(id, 0))
+
+
+# --- Реклама «×2 урон этому боссу» -------------------------------------------
+func activate_boss_ad() -> void:
+	if is_boss:
+		boss_ad_active = true
+		stats_changed.emit()
+
+func boss_ad_mult() -> float:
+	return 2.0 if (boss_ad_active and is_boss) else 1.0
 
 func punk_ready() -> bool:
 	return punk_charge >= 1.0 and not punk_active
@@ -276,8 +416,14 @@ func buy_meta(id: String) -> bool:
 func do_prestige() -> int:
 	if not can_prestige():
 		return 0
-	# Черепа уже начислены с боссов по ходу игры — сам сброс их НЕ выдаёт.
-	# Остаются: черепа, дерево, рекорд. Сбрасываются: золото, герои, стадия.
+	_tlm_prestiges += 1
+	_tlm_event("PRESTIGE #%d from_s%d max=%d bells=%d" % [_tlm_prestiges, stage, max_stage, Economy.bells])
+	# Куш сброса: pending-рекорды + «гастрольный бонус» за глубину забега.
+	var payout: int = reset_payout_preview()
+	bells_pending = 0.0
+	run_peak_stage = 1
+	if payout > 0:
+		Economy.add_bells(payout)
 	tap_level = 0
 	for id in ALLY_ORDER:
 		ally_levels[id] = 0
@@ -296,7 +442,7 @@ func do_prestige() -> int:
 	stage_changed.emit(stage, location())
 	stats_changed.emit()
 	prestige_changed.emit()
-	return 0
+	return payout
 
 
 # --- Враги / стадии ----------------------------------------------------------
@@ -306,9 +452,13 @@ func _enemies_needed() -> int:
 func _spawn_enemy() -> void:
 	boss_pending_fail = false
 	_last_boss_sec = -1
+	boss_ad_active = false
 	is_boss = (stage % Balance.BOSS_EVERY == 0)
 	var base_hp: float = Balance.ENEMY_HP_BASE * pow(Balance.ENEMY_HP_GROWTH, stage - 1)
-	enemy_max_hp = base_hp * (Balance.BOSS_HP_MULT if is_boss else 1.0)
+	var bhm: float = Balance.BOSS_HP_MULT
+	if is_boss and stage % Balance.STAGES_PER_LOCATION == 0:
+		bhm *= Balance.LOCATION_BOSS_HP_MULT   # финал локации — «ворота»
+	enemy_max_hp = base_hp * (bhm if is_boss else 1.0)
 	enemy_hp = enemy_max_hp
 	boss_time_left = Balance.BOSS_TIMER_SEC if is_boss else 0.0
 	enemy_changed.emit(enemy_hp, enemy_max_hp)
@@ -340,21 +490,37 @@ func _on_enemy_killed() -> void:
 	else:
 		_spawn_enemy()
 
-# Черепа капают за впервые достигнутую глубину (разностная модель — без фарма):
-# начисляются РЕАЛЬНО в кошелёк с каждого нового рекордного босса и копятся.
+# Черепа за впервые достигнутую глубину — гибрид 60/40: доля капает в кошелёк
+# сразу (видимый прогресс), остаток копится как pending и зачисляется при
+# «Новой Сказке» (у сброса есть немедленный куш). Финал локации платит двойную
+# капель — праздник ворот.
 func _award_boss_bells() -> void:
 	var target: int = prestige_target_bells()   # floor(k * рекорд^exp)
 	var gain: int = target - int(bells_earned_total)
-	if gain > 0:
-		bells_earned_total = float(target)
-		Economy.add_bells(gain)
-		boss_bells_awarded.emit(gain)   # для полёта черепов из босса в счётчик
-		prestige_changed.emit()
+	if gain <= 0:
+		return
+	bells_earned_total = float(target)
+	var drip: int = int(floor(float(gain) * Balance.BELLS_DRIP_SHARE))
+	bells_pending += float(gain - drip)
+	if (stage - 1) % Balance.STAGES_PER_LOCATION == 0:   # убит финальный босс локации
+		drip = int(drip * Balance.LOCATION_BOSS_BELLS_MULT)
+	if drip > 0:
+		Economy.add_bells(drip)
+		boss_bells_awarded.emit(drip)   # для полёта черепов из босса в счётчик
+	prestige_changed.emit()
+
+# Сколько зачислит «Новая Сказка» прямо сейчас: pending-рекорды + «гастрольный
+# бонус» за глубину текущего забега (платит даже без рекорда — мета не мёрзнет).
+func reset_payout_preview() -> int:
+	var repeat_bonus: int = int(floor(Balance.BELLS_REPEAT_SHARE * Balance.PRESTIGE_BELLS_K * pow(float(run_peak_stage), Balance.PRESTIGE_BELLS_EXP)))
+	return int(bells_pending) + repeat_bonus
 
 func _advance_stage() -> void:
 	kills_on_stage = 0
 	stage += 1
 	max_stage = max(max_stage, stage)
+	run_peak_stage = max(run_peak_stage, stage)
+	_tlm_row()   # телеметрия: точка кривой на каждой пройденной стадии
 	stage_changed.emit(stage, location())
 	_spawn_enemy()
 
@@ -384,7 +550,7 @@ func _retreat_stage() -> void:
 func player_tap() -> Dictionary:
 	# Возвращает инфо для juice/UI: {"damage":x, "crit":bool}
 	_add_punk_charge()                 # заряд панк-рока копится от тапов игрока
-	var dmg: float = tap_damage() * punk_dmg_mult()
+	var dmg: float = tap_damage() * punk_dmg_mult() * boss_ad_mult()
 	var crit: bool = randf() < Balance.CRIT_CHANCE
 	if crit:
 		dmg *= Balance.CRIT_MULT
@@ -399,7 +565,7 @@ func buy_tap_upgrade() -> bool:
 	return false
 
 func buy_ally(id: String) -> bool:
-	if not ALLIES.has(id):
+	if not ALLIES.has(id) or not hero_unlocked(id):
 		return false
 	if Economy.spend_gold(ally_cost(id)):
 		ally_levels[id] = int(ally_levels.get(id, 0)) + 1
@@ -410,6 +576,10 @@ func buy_ally(id: String) -> bool:
 
 # --- Тик: idle-DPS + таймер босса -------------------------------------------
 func _process(delta: float) -> void:
+	# телеметрия: активное время (на паузе _process не тикает) + панк-uptime
+	_tlm_t += delta
+	if punk_active:
+		_tlm_punk_t += delta
 	# ПОЛНЫЙ ПАНК-РОК: тикаем таймер режима (сигнал — только на смене состояния,
 	# обратный отсчёт UI читает из punk_time_left сам)
 	if punk_active:
@@ -421,7 +591,7 @@ func _process(delta: float) -> void:
 
 	# Дискретные атаки: каждый герой бьёт в свой ритм (чанк урона + сигнал)
 	var sp: float = punk_speed_mult()   # в раже атакуют чаще
-	var dm: float = punk_dmg_mult()
+	var dm: float = punk_dmg_mult() * boss_ad_mult()
 	for id in ALLY_ORDER:
 		if ally_levels.get(id, 0) <= 0:
 			continue
@@ -439,6 +609,8 @@ func _process(delta: float) -> void:
 			boss_time_left = 0.0
 			boss_pending_fail = true        # не откатываем сразу — ждём решение игрока
 			_last_boss_sec = 0
+			_tlm_boss_fails += 1
+			_tlm_event("BOSS_FAIL s%d" % stage)
 			boss_changed.emit(true, 0.0)
 			boss_failed.emit()
 		else:
@@ -468,10 +640,17 @@ func _snapshot() -> Dictionary:
 		"kills_on_stage": kills_on_stage,
 		"meta_levels": meta_levels,
 		"bells_earned_total": bells_earned_total,
+		"bells_pending": bells_pending,
+		"run_peak_stage": run_peak_stage,
+		"daily_day": daily_day,
+		"daily_last_day_id": daily_last_day_id,
+		"daily_last_unix": daily_last_unix,
+		"daily_claims": daily_claims,
 		"time": int(Time.get_unix_time_from_system()),
 	}
 
 func save_game() -> void:
+	_tlm_flush()   # телеметрию пишем тем же ритмом, что и сейв
 	var f := FileAccess.open(Balance.SAVE_PATH, FileAccess.WRITE)
 	if f == null:
 		push_warning("Не удалось открыть сейв для записи")
@@ -510,10 +689,17 @@ func load_game() -> void:
 			meta_levels[id] = clampi(int(saved_meta.get(id, 0)), 0, meta_cap(id))
 	kills_on_stage = clampi(int(data.get("kills_on_stage", 0)), 0, Balance.ENEMIES_PER_STAGE)
 	bells_earned_total = maxf(0.0, float(data.get("bells_earned_total", 0.0)))
+	bells_pending = maxf(0.0, float(data.get("bells_pending", 0.0)))
+	run_peak_stage = clampi(int(data.get("run_peak_stage", stage)), 1, stage)
+	daily_day = clampi(int(data.get("daily_day", 1)), 1, 7)
+	daily_last_day_id = int(data.get("daily_last_day_id", -1))
+	daily_last_unix = maxi(0, int(data.get("daily_last_unix", 0)))
+	daily_claims = maxi(0, int(data.get("daily_claims", 0)))
 	_pending_offline_time = int(data.get("time", 0))
 
 func dev_boost_to_50() -> void:
 	# [ТЕСТ] Прыжок на стадию 50 с соответствующей прокачкой (для теста «Новой сказки»).
+	_tlm_event("DEV_BOOST_50")   # помечаем — этот заход не годится для калибровки
 	max_stage = max(max_stage, 50)
 	stage = 50
 	kills_on_stage = 0
@@ -522,12 +708,15 @@ func dev_boost_to_50() -> void:
 	for i in ALLY_ORDER.size():
 		ally_levels[ALLY_ORDER[i]] = lvls[i] if i < lvls.size() else 0
 	Economy.add_gold(500000.0)
-	# начисляем черепа за «пройденную» глубину, чтобы было что распределять в тесте
+	run_peak_stage = 50
+	# начисляем черепа за «пройденную» глубину тем же сплитом 60/40
 	var target: int = prestige_target_bells()
 	var gain: int = target - int(bells_earned_total)
 	if gain > 0:
 		bells_earned_total = float(target)
-		Economy.add_bells(gain)
+		var drip: int = int(floor(float(gain) * Balance.BELLS_DRIP_SHARE))
+		bells_pending += float(gain - drip)
+		Economy.add_bells(drip)
 	_spawn_enemy()
 	stage_changed.emit(stage, location())
 	stats_changed.emit()
@@ -552,6 +741,13 @@ func reset_progress() -> void:
 	for id in Balance.PRESTIGE_ORDER:
 		meta_levels[id] = 0
 	bells_earned_total = 0.0
+	bells_pending = 0.0
+	run_peak_stage = 1
+	boss_ad_active = false
+	daily_day = 1
+	daily_last_day_id = -1
+	daily_last_unix = 0
+	daily_claims = 0
 	Economy.gold = 0.0
 	Economy.bells = 0
 	Economy.premium = 0
@@ -578,4 +774,5 @@ func _apply_offline(saved_time: int) -> void:
 	var income: float = idle_gold_per_sec() * elapsed * Balance.OFFLINE_RATE * prestige_offline_income_mult()
 	if income > 0.0:
 		last_offline_income = income   # НЕ начисляем сразу — золото даст UI по «Забрать»
+		_tlm_event("OFFLINE %.0fs +%s gold" % [elapsed, String.num_scientific(income)])
 		print("[OFFLINE] Доступно золота за %.0f сек: %.1f" % [elapsed, income])

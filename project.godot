@@ -24,6 +24,7 @@ Balance="*res://game/config/Balance.gd"
 Economy="*res://game/autoload/Economy.gd"
 Monetization="*res://game/autoload/Monetization.gd"
 Game="*res://game/autoload/Game.gd"
+Notify="*res://game/autoload/Notify.gd"
 
 [audio]
 
