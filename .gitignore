@@ -28,3 +28,6 @@ art_in/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# --- Секреты подписи (release keystore creds) ---
+export_presets.credentials.cfg

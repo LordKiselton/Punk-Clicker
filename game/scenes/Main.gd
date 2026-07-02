@@ -2860,7 +2860,8 @@ func _build_settings() -> void:
 
 	vb.add_child(_settings_sep())
 	var priv := _settings_button("Политика конфиденциальности", SURF, false)
-	priv.pressed.connect(func(): pass)   # заглушка — URL подключим позже
+	priv.pressed.connect(func():
+		OS.shell_open("https://lordkiselton.github.io/Punk-Clicker/privacy.html"))
 	vb.add_child(priv)
 	var cred := _settings_button("Кредиты: «Балаган» · панк-сказка", SURF, false)
 	cred.disabled = true
