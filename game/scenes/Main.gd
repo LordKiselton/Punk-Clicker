@@ -27,7 +27,7 @@ const F_NUM := 32
 const F_RES := 30        # единый размер верхних ресурсов
 const F_BOSS := 42       # крупный текст босса
 const PORTRAIT_H := 150  # фикс. высота портрета героя
-const APP_VERSION := "0.1 (сборка 53)"   # футер настроек; поднять при релизе вместе с version/code
+const APP_VERSION := "0.1 (сборка 54)"   # футер настроек; поднять при релизе вместе с version/code
 const F_BODY := 26
 const F_SUB := 22
 const F_SMALL := 18
@@ -1711,13 +1711,29 @@ func _fade_transition(mid: Callable, caption: String = "", caption_col: Color = 
 	var t := _fade_rect.create_tween()
 	t.tween_property(_fade_rect, "color:a", 1.0, 0.25)
 	t.parallel().tween_property(_fade_label, "modulate:a", 1.0, 0.25)
-	t.tween_callback(func(): if mid.is_valid(): mid.call())   # смена стейта — в темноте
+	t.tween_callback(func():
+		if mid.is_valid(): mid.call()   # смена стейта — в темноте
+		_snap_scene_visuals())          # и сцена обновляется СРАЗУ (твины Main в паузе)
 	t.tween_interval(0.55)                                     # держим — подпись читается
 	t.tween_property(_fade_rect, "color:a", 0.0, 0.35)
 	t.parallel().tween_property(_fade_label, "modulate:a", 0.0, 0.30)
 	t.tween_callback(func():
 		if is_instance_valid(_fade_rect): _fade_rect.visible = false
 		get_tree().paused = false)
+
+
+# Мгновенное обновление сцены под фейдом: враг/фон/HP/пипсы/заголовок без твинов
+# (твины Main заморожены паузой — прямые присваивания работают всегда)
+func _snap_scene_visuals() -> void:
+	if _enemy_tw and _enemy_tw.is_valid():
+		_enemy_tw.kill()   # недоигранная анимация смерти не перезапишет новый вид
+	_update_enemy_visual()          # текстура врага + фон локации
+	if is_instance_valid(_enemy):
+		_enemy.scale = Vector2.ONE
+		_enemy.modulate.a = 1.0
+	_on_enemy_changed(Game.enemy_hp, Game.enemy_max_hp)
+	_refresh_pips()
+	_refresh()                      # заголовок «локация · стадия», кнопки
 
 
 # --- Prestige UI «Новая сказка» ----------------------------------------------
