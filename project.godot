@@ -10,8 +10,8 @@ config_version=5
 
 [application]
 
-config/name="Балаган"
-config/description="Боевой кликер в мире панк-сказки. Тропа, нечисть, балаган."
+config/name="Панк-Рок Кликер: ХОЙ!"
+config/description="Боевой кликер в мире панк-сказки. Бей нечисть, собирай труппу, кричи ХОЙ!"
 run/main_scene="res://game/scenes/Main.tscn"
 config/features=PackedStringArray("4.6", "Mobile")
 config/icon="res://icon/icon_512.png"

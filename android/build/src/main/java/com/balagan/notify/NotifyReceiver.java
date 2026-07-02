@@ -19,7 +19,7 @@ public class NotifyReceiver extends BroadcastReceiver {
             NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 nm.createNotificationChannel(
-                        new NotificationChannel(CH, "Балаган", NotificationManager.IMPORTANCE_DEFAULT));
+                        new NotificationChannel(CH, "Награды и напоминания", NotificationManager.IMPORTANCE_DEFAULT));
             }
             Intent launch = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
             PendingIntent tap = PendingIntent.getActivity(ctx, 0, launch,

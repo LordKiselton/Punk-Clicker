@@ -1,7 +1,10 @@
-# Балаган
+# Панк-Рок Кликер: ХОЙ!
+
+*(кодовое имя проекта — «Балаган»)*
 
 Мобильный кликер в стиле панк-сказки для **RuStore**. Движок: **Godot 4.6.1** (GDScript), Android.
-Монетизация: Yandex Mobile Ads (rewarded) + RuStore Billing (план). Боевой кликер архетипа Tap Titans.
+Монетизация: Yandex Mobile Ads (rewarded); RuStore Billing — первым апдейтом. Боевой кликер архетипа Tap Titans.
+Имя в сторе: **«Панк-Рок Кликер: ХОЙ!»**, под иконкой: **«ХОЙ!»**, package: `com.punkfairytale.balagan`.
 
 ## Документы
 - [VISION.md](VISION.md) — вижн

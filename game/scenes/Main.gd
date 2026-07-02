@@ -2944,7 +2944,7 @@ func _build_settings() -> void:
 	vb.add_child(close)
 	# футер: кто мы + версия (полезно для саппорта)
 	var foot := Label.new()
-	foot.text = "«Балаган» · панк-сказка · v%s" % APP_VERSION
+	foot.text = "«Панк-Рок Кликер: ХОЙ!» · v%s" % APP_VERSION
 	foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lab(foot, F_SMALL, Color("#5a4f68"))
 	vb.add_child(foot)
