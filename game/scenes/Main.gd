@@ -213,6 +213,7 @@ var _nudge: Control = null              # подсказка «Начни Нов
 var _nudge_tw: Tween = null             # пульс кнопки под нуджем
 var _last_fail_stage: int = -1          # для нуджа: стадия последнего провала босса
 var _fail_count: int = 0                # сколько раз подряд провалили этого босса
+var _first_boss_reported: bool = false  # аналитика: первый босс — один раз за сессию
 
 # --- Иконки ресурсов ---------------------------------------------------------
 var _gold_tex: Texture2D = null
@@ -1541,6 +1542,9 @@ func _boss_beat(title: String, subtitle: String, col: Color) -> void:
 	Engine.time_scale = 1.0
 
 func _on_boss_won() -> void:
+	if not _first_boss_reported:
+		_first_boss_reported = true
+		Analytics.report("first_boss_win", {"stage": Game.stage})
 	_fail_count = 0            # босс повержен — счётчик провалов сброшен
 	_last_fail_stage = -1
 	var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
@@ -2742,6 +2746,7 @@ func _tut_finish() -> void:
 	_tut_step = -1
 	_tut_done = true
 	_save_settings()
+	Analytics.report("tutorial_done")
 	if is_instance_valid(_tut_rect):
 		var tw := create_tween()
 		tw.set_parallel(true)

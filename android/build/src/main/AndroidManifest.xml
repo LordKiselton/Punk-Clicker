@@ -58,6 +58,10 @@
         <meta-data
             android:name="org.godotengine.plugin.v2.BalaganNotify"
             android:value="com.balagan.notify.NotifyPlugin" />
+        <!-- Аналитика AppMetrica -->
+        <meta-data
+            android:name="org.godotengine.plugin.v2.BalaganMetrica"
+            android:value="com.balagan.metrica.MetricaPlugin" />
 
     </application>
 

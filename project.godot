@@ -25,6 +25,7 @@ Economy="*res://game/autoload/Economy.gd"
 Monetization="*res://game/autoload/Monetization.gd"
 Game="*res://game/autoload/Game.gd"
 Notify="*res://game/autoload/Notify.gd"
+Analytics="*res://game/autoload/Analytics.gd"
 
 [audio]
 

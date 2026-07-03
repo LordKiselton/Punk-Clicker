@@ -145,6 +145,7 @@ func telemetry_text() -> String:
 func _on_tlm_ad(placement: String) -> void:
 	_tlm_ads += 1
 	_tlm_event("AD %s s%d" % [placement, stage])
+	Analytics.report("ad_watched", {"placement": placement, "stage": stage})
 
 
 func _notification(what: int) -> void:
@@ -302,6 +303,9 @@ func claim_daily() -> Dictionary:
 	daily_claims += 1
 	daily_day = daily_day % 7 + 1
 	_tlm_event("DAILY claim#%d hero=%s" % [daily_claims, String(r.hero)])
+	Analytics.report("daily_claim", {"num": daily_claims})
+	if String(r.hero) != "":
+		Analytics.report("hero_arrival", {"hero": String(r.hero)})
 	daily_changed.emit()
 	stats_changed.emit()   # мог разлочиться гастролёр — обновить кнопки
 	save_game()
@@ -418,6 +422,7 @@ func do_prestige() -> int:
 		return 0
 	_tlm_prestiges += 1
 	_tlm_event("PRESTIGE #%d from_s%d max=%d bells=%d" % [_tlm_prestiges, stage, max_stage, Economy.bells])
+	Analytics.report("prestige", {"num": _tlm_prestiges, "from_stage": stage, "max_stage": max_stage})
 	# Куш сброса: pending-рекорды + «гастрольный бонус» за глубину забега.
 	var payout: int = reset_payout_preview()
 	bells_pending = 0.0
@@ -520,6 +525,8 @@ func _advance_stage() -> void:
 	stage += 1
 	max_stage = max(max_stage, stage)
 	run_peak_stage = max(run_peak_stage, stage)
+	if stage in [25, 50, 100, 150, 200, 300] and max_stage == stage:   # веха достигнута впервые
+		Analytics.report("stage_%d" % stage)
 	_tlm_row()   # телеметрия: точка кривой на каждой пройденной стадии
 	stage_changed.emit(stage, location())
 	_spawn_enemy()
@@ -611,6 +618,7 @@ func _process(delta: float) -> void:
 			_last_boss_sec = 0
 			_tlm_boss_fails += 1
 			_tlm_event("BOSS_FAIL s%d" % stage)
+			Analytics.report("boss_fail", {"stage": stage})
 			boss_changed.emit(true, 0.0)
 			boss_failed.emit()
 		else:
