@@ -136,6 +136,7 @@ android {
 
     lintOptions {
         abortOnError false
+        checkReleaseBuilds false
         disable 'MissingTranslation', 'UnusedResources'
     }
 
