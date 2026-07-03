@@ -44,8 +44,9 @@ dependencies {
     implementation "androidx.fragment:fragment:$versions.fragmentVersion"
     implementation "androidx.core:core-splashscreen:$versions.splashscreenVersion"
 
-    // Аналитика Яндекс AppMetrica (свой плагин BalaganMetrica оборачивает этот SDK)
-    implementation "io.appmetrica.analytics:analytics:8.3.0"
+    // Аналитика Яндекс AppMetrica. Версия 7.14.2 — совместима с AppMetrica-ядром,
+    // которое тянет Yandex Ads 7.18.3 (строго [7.14.2, 8.0.0)); иначе конфликт версий.
+    implementation "io.appmetrica.analytics:analytics:7.14.2"
 
     if (rootProject.findProject(":lib")) {
         implementation project(":lib")
