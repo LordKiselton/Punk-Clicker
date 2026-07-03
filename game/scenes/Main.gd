@@ -27,7 +27,8 @@ const F_NUM := 32
 const F_RES := 30        # единый размер верхних ресурсов
 const F_BOSS := 42       # крупный текст босса
 const PORTRAIT_H := 150  # фикс. высота портрета героя
-const APP_VERSION := "0.1 (сборка 54)"   # футер настроек; поднять при релизе вместе с version/code
+const APP_VERSION := "1.0.0"             # футер настроек; синхронно с version/name в export_presets
+const DEV_TOOLS := false                 # true → показать тест-зону в настройках (прокачка/лог)
 const F_BODY := 26
 const F_SUB := 22
 const F_SMALL := 18
@@ -2934,26 +2935,27 @@ func _build_settings() -> void:
 	vb.add_child(priv)
 
 	# --- дев-зона: приглушена, вырезается перед релизом ---
-	vb.add_child(_settings_sep())
-	var devl := Label.new()
-	devl.text = "— для теста —"
-	devl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(devl, F_SMALL, Color("#5a4f68"))
-	vb.add_child(devl)
-	var dev := _settings_button("Прокачать до 50 стадии", SURF, false)
-	dev.custom_minimum_size = Vector2(0, 46)
-	dev.add_theme_font_size_override("font_size", F_SMALL)
-	dev.modulate = Color(0.75, 0.75, 0.75)
-	dev.pressed.connect(_on_dev_boost_pressed)
-	vb.add_child(dev)
-	var tlm := _settings_button("Скопировать лог баланса", SURF, false)
-	tlm.custom_minimum_size = Vector2(0, 46)
-	tlm.add_theme_font_size_override("font_size", F_SMALL)
-	tlm.modulate = Color(0.75, 0.75, 0.75)
-	tlm.pressed.connect(func():
-		DisplayServer.clipboard_set(Game.telemetry_text())
-		tlm.text = "Лог в буфере — вставь в чат/файл")
-	vb.add_child(tlm)
+	if DEV_TOOLS:   # дев-зона: в релизе скрыта (флаг ниже), код сохранён для отладки
+		vb.add_child(_settings_sep())
+		var devl := Label.new()
+		devl.text = "— для теста —"
+		devl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_lab(devl, F_SMALL, Color("#5a4f68"))
+		vb.add_child(devl)
+		var dev := _settings_button("Прокачать до 50 стадии", SURF, false)
+		dev.custom_minimum_size = Vector2(0, 46)
+		dev.add_theme_font_size_override("font_size", F_SMALL)
+		dev.modulate = Color(0.75, 0.75, 0.75)
+		dev.pressed.connect(_on_dev_boost_pressed)
+		vb.add_child(dev)
+		var tlm := _settings_button("Скопировать лог баланса", SURF, false)
+		tlm.custom_minimum_size = Vector2(0, 46)
+		tlm.add_theme_font_size_override("font_size", F_SMALL)
+		tlm.modulate = Color(0.75, 0.75, 0.75)
+		tlm.pressed.connect(func():
+			DisplayServer.clipboard_set(Game.telemetry_text())
+			tlm.text = "Лог в буфере — вставь в чат/файл")
+		vb.add_child(tlm)
 
 	var close := _settings_button("Закрыть", WOOD, true)
 	close.pressed.connect(_close_settings)
