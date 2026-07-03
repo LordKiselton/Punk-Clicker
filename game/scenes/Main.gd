@@ -107,6 +107,7 @@ const FONT_HEADER := "res://fonts/RuslanDisplay.ttf"
 @onready var _reward_btn: Button = %RewardBtn
 
 var _bg_tex: Texture2D = null
+var _stage_bg: TextureRect = null       # подложка под нижним UI (art/ui/stage.png, если есть)
 var _enemy_textures: Dictionary = {}
 var _loc_bg: Dictionary = {}            # индекс локации -> фон
 var _current_enemy: String = ""         # id текущего врага (выбран при спавне)
@@ -286,6 +287,7 @@ func _ready() -> void:
 	_apply_fonts()
 	_apply_styles()
 	if _bg_tex: _bgrect.texture = _bg_tex
+	_build_stage_backdrop()
 	_setup_parallax()
 	_update_enemy_visual()
 
@@ -511,6 +513,25 @@ func _apply_fonts() -> void:
 			if is_instance_valid(n):
 				n.add_theme_font_override("font", _header_font)
 
+
+# Подложка под нижним UI: заполняет пустую зону между ареной и краем экрана.
+# Слот drop-in — появляется, только если положить art/ui/stage.png (иначе инертна).
+# Рисуется поверх базового тёмного фона, но ПОД ареной (арена перекрывает шов) и UI.
+func _build_stage_backdrop() -> void:
+	if not ResourceLoader.exists("res://art/ui/stage.png"):
+		return
+	_stage_bg = TextureRect.new()
+	_stage_bg.texture = load("res://art/ui/stage.png")
+	_stage_bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_stage_bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_stage_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_stage_bg.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_stage_bg.offset_top = -560.0   # покрывает нижнюю зону + чуть заходит под арену (шов)
+	_stage_bg.offset_bottom = 0.0
+	add_child(_stage_bg)
+	# поставить сразу после базового фона: за ареной и за всем UI
+	var base := get_node_or_null("%Bg")
+	move_child(_stage_bg, (base.get_index() + 1) if base else 1)
 
 func _load_textures() -> void:
 	if ResourceLoader.exists(BG_TEX_PATH):
