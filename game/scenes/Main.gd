@@ -107,7 +107,6 @@ const FONT_HEADER := "res://fonts/RuslanDisplay.ttf"
 @onready var _reward_btn: Button = %RewardBtn
 
 var _bg_tex: Texture2D = null
-var _stage_bg: TextureRect = null       # подложка под нижним UI (art/ui/stage.png, если есть)
 var _enemy_textures: Dictionary = {}
 var _loc_bg: Dictionary = {}            # индекс локации -> фон
 var _current_enemy: String = ""         # id текущего врага (выбран при спавне)
@@ -287,7 +286,6 @@ func _ready() -> void:
 	_apply_fonts()
 	_apply_styles()
 	if _bg_tex: _bgrect.texture = _bg_tex
-	_build_stage_backdrop()
 	_setup_parallax()
 	_update_enemy_visual()
 
@@ -513,25 +511,6 @@ func _apply_fonts() -> void:
 			if is_instance_valid(n):
 				n.add_theme_font_override("font", _header_font)
 
-
-# Подложка под нижним UI: заполняет пустую зону между ареной и краем экрана.
-# Слот drop-in — появляется, только если положить art/ui/stage.png (иначе инертна).
-# Рисуется поверх базового тёмного фона, но ПОД ареной (арена перекрывает шов) и UI.
-func _build_stage_backdrop() -> void:
-	if not ResourceLoader.exists("res://art/ui/stage.png"):
-		return
-	_stage_bg = TextureRect.new()
-	_stage_bg.texture = load("res://art/ui/stage.png")
-	_stage_bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_stage_bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	_stage_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_stage_bg.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	_stage_bg.offset_top = -560.0   # покрывает нижнюю зону + чуть заходит под арену (шов)
-	_stage_bg.offset_bottom = 0.0
-	add_child(_stage_bg)
-	# поставить сразу после базового фона: за ареной и за всем UI
-	var base := get_node_or_null("%Bg")
-	move_child(_stage_bg, (base.get_index() + 1) if base else 1)
 
 func _load_textures() -> void:
 	if ResourceLoader.exists(BG_TEX_PATH):
@@ -2306,6 +2285,8 @@ func _maybe_push_ask() -> void:
 			func(): pass)
 
 # Модальный диалог с портретом Шута и двумя кнопками
+const DIALOG_ARM_DELAY := 2.2   # сек: пауза, пока кнопки диалога Шута «созревают» (анти-протап)
+
 func _show_char_dialog(text: String, yes_t: String, no_t: String, on_yes: Callable, on_no: Callable) -> void:
 	if is_instance_valid(_char_layer):
 		_char_layer.queue_free()
@@ -2356,18 +2337,29 @@ func _show_char_dialog(text: String, yes_t: String, no_t: String, on_yes: Callab
 	_lab(lbl, F_BODY, TXT)
 	hb.add_child(lbl)
 	var yes := _settings_button(yes_t, WOOD, true)
+	var no := _settings_button(no_t, SURF, false)
+	# Защита от протапа: при быстрых тапах окно закрывалось вслепую. Кнопки «созревают»
+	# через паузу — до этого приглушены и не реагируют, чтобы выбор был осознанным.
+	var armed := {"v": false}
+	yes.modulate.a = 0.4
+	no.modulate.a = 0.4
 	yes.pressed.connect(func():
+		if not armed["v"]: return
 		_pop_close_free(panel, box)
 		_char_layer = null
 		if on_yes.is_valid(): on_yes.call())
-	vb.add_child(yes)
-	var no := _settings_button(no_t, SURF, false)
 	no.pressed.connect(func():
+		if not armed["v"]: return
 		_pop_close_free(panel, box)
 		_char_layer = null
 		if on_no.is_valid(): on_no.call())
+	vb.add_child(yes)
 	vb.add_child(no)
 	_pop_open(panel, box)
+	get_tree().create_timer(DIALOG_ARM_DELAY).timeout.connect(func():
+		armed["v"] = true
+		if is_instance_valid(yes): yes.create_tween().tween_property(yes, "modulate:a", 1.0, 0.22)
+		if is_instance_valid(no): no.create_tween().tween_property(no, "modulate:a", 1.0, 0.22))
 
 
 # --- «Афиша дня» ---------------------------------------------------------------

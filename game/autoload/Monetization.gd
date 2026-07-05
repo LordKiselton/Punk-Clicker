@@ -17,6 +17,8 @@ signal purchase_failed(product_id: String)
 
 # Демо-ID Yandex для проверки рекламы без аккаунта.
 const DEMO_REWARDED_ID := "demo-rewarded-yandex"
+# Боевой rewarded-блок РСЯ (приложение com.punkfairytale.balagan).
+const REWARDED_ID := "R-M-19547671-1"
 
 var use_stub: bool = true            # true = эмуляция (ПК/нет плагина)
 var _yandex: Node = null
@@ -42,7 +44,7 @@ func _setup_yandex() -> void:
 		return
 	_yandex = script.new()
 	_yandex.api_key = ""
-	_yandex.rewarded_id = DEMO_REWARDED_ID
+	_yandex.rewarded_id = REWARDED_ID
 	add_child(_yandex)
 	if _yandex.init():
 		_yandex.rewarded.connect(func(_currency, _amount): _reward_earned = true)
