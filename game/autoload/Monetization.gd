@@ -64,6 +64,7 @@ func _pause_game(p: bool) -> void:
 		get_tree().paused = p
 
 func show_rewarded(placement: String) -> void:
+	Analytics.report("ad_offered", {"placement": placement})
 	_pending_placement = placement
 	_reward_earned = false
 	_pause_game(true)   # игра замирает на время ролика (idle, таймер босса)

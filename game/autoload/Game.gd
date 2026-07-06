@@ -87,6 +87,7 @@ var _tlm_punk_t: float = 0.0     # сколько из него шёл панк-
 var _tlm_prestiges: int = 0
 var _tlm_boss_fails: int = 0
 var _tlm_ads: int = 0
+var _last_prestige_t: float = 0.0   # _tlm_t на момент прошлого престижа (для loop_sec)
 
 
 func _ready() -> void:
@@ -99,6 +100,7 @@ func _ready() -> void:
 	_spawn_enemy()
 	_apply_offline(_pending_offline_time)   # после спавна — корректный idle-доход
 	Monetization.rewarded_completed.connect(_on_tlm_ad)
+	Monetization.rewarded_failed.connect(_on_ad_failed)
 	set_process(true)
 
 
@@ -147,11 +149,18 @@ func _on_tlm_ad(placement: String) -> void:
 	_tlm_event("AD %s s%d" % [placement, stage])
 	Analytics.report("ad_watched", {"placement": placement, "stage": stage})
 
+func _on_ad_failed(placement: String) -> void:
+	Analytics.report("ad_failed", {"placement": placement, "stage": stage})
+
 
 func _notification(what: int) -> void:
 	# Сохраняемся при сворачивании/выходе, чтобы не терять прогресс; там же — план пушей
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		save_game()
+		Analytics.report("econ_snapshot", {
+			"stage": stage, "gold": String.num_scientific(Economy.gold),
+			"rate": String.num_scientific(total_dps()), "bells": Economy.bells,
+			"prestige": _tlm_prestiges, "t_sec": int(_tlm_t)})
 		Notify.on_app_hide()
 	elif what == NOTIFICATION_APPLICATION_RESUMED or what == NOTIFICATION_APPLICATION_FOCUS_IN:
 		Notify.cancel_all()   # вернулся — запланированное неактуально
@@ -421,10 +430,13 @@ func do_prestige() -> int:
 	if not can_prestige():
 		return 0
 	_tlm_prestiges += 1
-	_tlm_event("PRESTIGE #%d from_s%d max=%d bells=%d" % [_tlm_prestiges, stage, max_stage, Economy.bells])
-	Analytics.report("prestige", {"num": _tlm_prestiges, "from_stage": stage, "max_stage": max_stage})
 	# Куш сброса: pending-рекорды + «гастрольный бонус» за глубину забега.
 	var payout: int = reset_payout_preview()
+	var loop_sec: int = int(_tlm_t - _last_prestige_t)
+	_last_prestige_t = _tlm_t
+	_tlm_event("PRESTIGE #%d from_s%d max=%d bells=%d" % [_tlm_prestiges, stage, max_stage, Economy.bells])
+	Analytics.report("prestige", {"num": _tlm_prestiges, "from_stage": stage,
+		"max_stage": max_stage, "bells_earned": payout, "loop_sec": loop_sec})
 	bells_pending = 0.0
 	run_peak_stage = 1
 	if payout > 0:
@@ -525,8 +537,8 @@ func _advance_stage() -> void:
 	stage += 1
 	max_stage = max(max_stage, stage)
 	run_peak_stage = max(run_peak_stage, stage)
-	if stage in [25, 50, 100, 150, 200, 300] and max_stage == stage:   # веха достигнута впервые
-		Analytics.report("stage_%d" % stage)
+	if stage in [10, 25, 50, 100, 150, 200, 300] and max_stage == stage:   # веха впервые
+		Analytics.report("stage_up", {"stage": stage, "t_sec": int(_tlm_t), "prestige": _tlm_prestiges})
 	_tlm_row()   # телеметрия: точка кривой на каждой пройденной стадии
 	stage_changed.emit(stage, location())
 	_spawn_enemy()

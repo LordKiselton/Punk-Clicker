@@ -27,7 +27,10 @@ const F_NUM := 32
 const F_RES := 30        # единый размер верхних ресурсов
 const F_BOSS := 42       # крупный текст босса
 const PORTRAIT_H := 150  # фикс. высота портрета героя
-const APP_VERSION := "1.0.0"             # футер настроек; синхронно с version/name в export_presets
+const APP_VERSION := "1.0.2"             # футер настроек; синхронно с version/name в export_presets
+const APP_VERSION_CODE := 102            # синхронно с version/code; для проверки обновления
+const STORE_URL := "https://www.rustore.ru/catalog/app/com.punkfairytale.balagan"
+const VERSION_URL := "https://lordkiselton.github.io/Punk-Clicker/version.json"
 const DEV_TOOLS := false                 # true → показать тест-зону в настройках (прокачка/лог)
 const F_BODY := 26
 const F_SUB := 22
@@ -226,6 +229,11 @@ var _pips_prev_done: int = 0           # для анимации нового п
 
 # --- Туториал первой сессии --------------------------------------------------
 var _tut_done: bool = false
+var _review_asked: bool = false         # промпт «оцените» показан (разово)
+var _klad_hint_seen: bool = false       # онбординг кнопки «Клад» показан (разово)
+var _update_nudged: bool = false        # нудж обновления показан в этой сессии
+var _update_http: HTTPRequest = null
+var _toast_layer: CanvasLayer = null
 var _tut_step: int = -1                 # -1 неактивен; 0..3 шаги
 var _tut_layer: CanvasLayer = null
 var _tut_rect: ColorRect = null         # затемнение + прожектор (шейдер)
@@ -333,6 +341,7 @@ func _ready() -> void:
 	# Гладкий старт: интро играет ПОД уход лоадскрина; окна — строго после него, по одному
 	get_tree().create_timer(1.2).timeout.connect(_intro)
 	get_tree().create_timer(2.2).timeout.connect(_start_flow)
+	get_tree().create_timer(3.6, true, false, true).timeout.connect(_late_hooks.bind(0))
 	_apply_safe_area.call_deferred()      # отступы под вырез/системные бары
 	get_viewport().size_changed.connect(_apply_safe_area)   # переприменять при готовности/ресайзе окна
 
@@ -903,6 +912,7 @@ func _on_rewarded(placement: String) -> void:
 	if _reward_btn: _reward_btn.disabled = false
 
 func _on_reward_failed(p: String) -> void:
+	_toast("Тишина в эфире — реклама сейчас недоступна, загляни позже.")
 	if p == "boss_time":
 		get_tree().paused = false
 		_apply_boss_loss()           # реклама не вышла — засчитываем поражение
@@ -1545,6 +1555,7 @@ func _on_boss_won() -> void:
 	if not _first_boss_reported:
 		_first_boss_reported = true
 		Analytics.report("first_boss_win", {"stage": Game.stage})
+	_maybe_ask_review()
 	_fail_count = 0            # босс повержен — счётчик провалов сброшен
 	_last_fail_stage = -1
 	var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
@@ -2362,6 +2373,139 @@ func _show_char_dialog(text: String, yes_t: String, no_t: String, on_yes: Callab
 		if is_instance_valid(no): no.create_tween().tween_property(no, "modulate:a", 1.0, 0.22))
 
 
+# === v1.0.2: онбординг / оценка / тост / обновление ==========================
+func _open_store_page() -> void:
+	OS.shell_open(STORE_URL)
+
+# Промпт «Оцените игру» — разово, после позитивного пика (первый босс)
+func _maybe_ask_review() -> void:
+	if _review_asked or not _tut_done:
+		return
+	_review_asked = true
+	_save_settings()
+	await get_tree().create_timer(1.4, true, false, true).timeout
+	_show_char_dialog(
+		"Оцени игру, если зашло. Честный панк-обмен: тебе игра, нам звёзды!",
+		"Оценить", "Позже",
+		_open_store_page, func(): pass)
+
+# Разовая подсказка про кнопку «Клад» (×2 за ролик): пульс кнопки + бабл Шута
+func _maybe_klad_hint() -> void:
+	if _klad_hint_seen or not _tut_done:
+		return
+	if not is_instance_valid(_reward_btn) or not _reward_btn.visible:
+		return
+	_klad_hint_seen = true
+	_save_settings()
+	_reward_btn.pivot_offset = _reward_btn.size * 0.5
+	var pt := _reward_btn.create_tween().set_loops(6)
+	pt.tween_property(_reward_btn, "scale", Vector2(1.12, 1.12), 0.45).set_trans(Tween.TRANS_SINE)
+	pt.tween_property(_reward_btn, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_SINE)
+	_show_klad_tip("Глянь короткий ролик — золото удвоится. Халявы много не бывает.")
+
+func _show_klad_tip(msg: String) -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 80
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(layer)
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 14, 2, 12))
+	box.custom_minimum_size = Vector2(320, 0)
+	layer.add_child(box)
+	var lbl := Label.new()
+	lbl.text = msg
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(lbl, F_BODY, TXT)
+	box.add_child(lbl)
+	await get_tree().process_frame          # дать боксу посчитать размер
+	if not is_instance_valid(_reward_btn):
+		layer.queue_free(); return
+	var r := _reward_btn.get_global_rect()
+	box.position = Vector2(clampf(r.end.x - 320.0, 12.0, 388.0), r.end.y + 8.0)
+	box.modulate.a = 0.0
+	var t := box.create_tween()
+	t.tween_property(box, "modulate:a", 1.0, 0.25)
+	t.tween_interval(5.0)
+	t.tween_property(box, "modulate:a", 0.0, 0.4)
+	t.tween_callback(func(): if is_instance_valid(layer): layer.queue_free())
+
+# Короткий тост внизу экрана (напр. реклама недоступна)
+func _toast(msg: String, secs: float = 2.4) -> void:
+	if is_instance_valid(_toast_layer):
+		_toast_layer.queue_free()
+	_toast_layer = CanvasLayer.new()
+	_toast_layer.layer = 80
+	_toast_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_toast_layer)
+	var mc := MarginContainer.new()
+	mc.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	mc.offset_top = -640.0
+	mc.offset_bottom = -560.0
+	mc.add_theme_constant_override("margin_left", 40)
+	mc.add_theme_constant_override("margin_right", 40)
+	_toast_layer.add_child(mc)
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 16, 2, 14))
+	box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	mc.add_child(box)
+	var lbl := Label.new()
+	lbl.text = msg
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(lbl, F_BODY, TXT)
+	box.add_child(lbl)
+	box.modulate.a = 0.0
+	var t := box.create_tween()
+	t.tween_property(box, "modulate:a", 1.0, 0.2)
+	t.tween_interval(secs)
+	t.tween_property(box, "modulate:a", 0.0, 0.35)
+	t.tween_callback(func():
+		if is_instance_valid(_toast_layer):
+			_toast_layer.queue_free()
+			_toast_layer = null)
+
+# Разовые подсказки/проверки после устаканивания сцены (не мешая модалкам/туториалу)
+func _late_hooks(tries: int) -> void:
+	if _tut_step >= 0 or is_instance_valid(_char_layer):
+		if tries < 6:
+			get_tree().create_timer(4.0, true, false, true).timeout.connect(_late_hooks.bind(tries + 1))
+		return
+	if _tut_done:
+		_maybe_klad_hint()
+		_check_update()
+
+# Проверка обновления: читаем version.json с GitHub Pages, сравниваем код версии
+func _check_update() -> void:
+	if _update_nudged:
+		return
+	_update_http = HTTPRequest.new()
+	add_child(_update_http)
+	_update_http.request_completed.connect(_on_update_checked)
+	if _update_http.request(VERSION_URL) != OK:
+		_update_http.queue_free()
+		_update_http = null
+
+func _on_update_checked(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if is_instance_valid(_update_http):
+		_update_http.queue_free()
+		_update_http = null
+	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		return
+	var data: Variant = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(data) != TYPE_DICTIONARY:
+		return
+	var latest: int = int((data as Dictionary).get("code", 0))
+	if latest <= APP_VERSION_CODE or _update_nudged or not _tut_done:
+		return
+	if _tut_step >= 0 or is_instance_valid(_char_layer):
+		return   # не перебиваем активную модалку/туториал
+	_update_nudged = true
+	_show_char_dialog(
+		"Вышел свежак! Обнови игру в RuStore — новьё уже там.",
+		"Обновить", "Позже",
+		_open_store_page, func(): pass)
+
+
 # --- «Афиша дня» ---------------------------------------------------------------
 func _build_daily() -> void:
 	# кнопка «ДЕНЬ N» в правой колонке топбара, под шестерёнкой
@@ -2743,6 +2887,7 @@ func _tut_set_shown(on: bool) -> void:
 func _tut_show_step() -> void:
 	if _tut_step < 0 or _tut_step >= TUT_STEPS.size():
 		return
+	Analytics.report("tutorial_step", {"step": _tut_step})
 	var s: Dictionary = TUT_STEPS[_tut_step]
 	_tut_taps = 0
 	if is_instance_valid(_tut_lead): _tut_lead.text = s.lead
@@ -2760,6 +2905,7 @@ func _tut_finish() -> void:
 	_tut_done = true
 	_save_settings()
 	Analytics.report("tutorial_done")
+	get_tree().create_timer(2.6, true, false, true).timeout.connect(_maybe_klad_hint)
 	if is_instance_valid(_tut_rect):
 		var tw := create_tween()
 		tw.set_parallel(true)
@@ -2875,6 +3021,8 @@ func _load_settings() -> void:
 		_welcome_seen = bool(cf.get_value("flags", "welcome_seen", false))
 		_push_asks = int(cf.get_value("flags", "push_asks", 0))
 		_tut_done = bool(cf.get_value("flags", "tut_done", false))
+		_review_asked = bool(cf.get_value("flags", "review_asked", false))
+		_klad_hint_seen = bool(cf.get_value("flags", "klad_hint_seen", false))
 
 func _save_settings() -> void:
 	var cf := ConfigFile.new()
@@ -2886,6 +3034,8 @@ func _save_settings() -> void:
 	cf.set_value("flags", "welcome_seen", _welcome_seen)
 	cf.set_value("flags", "push_asks", _push_asks)
 	cf.set_value("flags", "tut_done", _tut_done)
+	cf.set_value("flags", "review_asked", _review_asked)
+	cf.set_value("flags", "klad_hint_seen", _klad_hint_seen)
 	cf.save(SETTINGS_PATH)
 
 func _apply_settings() -> void:

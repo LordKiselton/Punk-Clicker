@@ -34,7 +34,9 @@ public class NotifyReceiver extends BroadcastReceiver {
                     .setStyle(new Notification.BigTextStyle().bigText(text))
                     .setAutoCancel(true)
                     .setContentIntent(tap);
-            nm.notify(intent.getIntExtra("id", 1), b.build());
+            int id = intent.getIntExtra("id", 1);
+            nm.notify(id, b.build());
+            NotifyStore.remove(ctx, id);   // сработал — убрать из хранилища пере-завода
         } catch (Exception e) { }
     }
 }
