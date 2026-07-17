@@ -27,17 +27,20 @@ const F_NUM := 32
 const F_RES := 30        # единый размер верхних ресурсов
 const F_BOSS := 42       # крупный текст босса
 const PORTRAIT_H := 150  # фикс. высота портрета героя
-const APP_VERSION := "1.0.2"             # футер настроек; синхронно с version/name в export_presets
-const APP_VERSION_CODE := 102            # синхронно с version/code; для проверки обновления
+const APP_VERSION := "1.0.3"               # футер настроек; синхронно с version/name в export_presets
+const APP_VERSION_CODE := 103            # синхронно с version/code; для проверки обновления
 const STORE_URL := "https://www.rustore.ru/catalog/app/com.punkfairytale.balagan"
 const VERSION_URL := "https://lordkiselton.github.io/Punk-Clicker/version.json"
 const DEV_TOOLS := false                 # true → показать тест-зону в настройках (прокачка/лог)
+const DOCK_STUB_ENABLED := false         # Заказы/Коллекция/Сундук — скрыто до фикса позиции (наезжают на UI)
 const F_BODY := 26
 const F_SUB := 22
 const F_SMALL := 18
 const F_DMG := 40
 const F_CRIT := 56
 const F_PASSIVE := 28
+
+const Barks = preload("res://game/config/Barks.gd")   # банк реплик труппы
 
 const ALLY_COLORS := {
 	"knight": Color("#8fa3b3"),       # Рыцарь — сталь
@@ -161,6 +164,27 @@ var _reset_btn: Button = null
 
 # --- Босс: телеграф / победа / поражение -------------------------------------
 var _boss_layer: CanvasLayer = null
+var _boss_banner: Node = null           # текущий босс-баннер (один за раз; новый перебивает старый)
+
+# --- Барки труппы (реплики над панком, не блокируют) ---
+var _bark_layer: CanvasLayer = null
+var _bark_wrap: Control = null
+var _bark_box: Control = null
+var _bark_portrait: TextureRect = null
+var _bark_ring: Panel = null
+var _bark_name: Label = null
+var _bark_text: Label = null
+var _bark_tw: Tween = null
+const BARK_DWELL := 4.1          # было 3.8 + 0.3 с
+const BARK_SLIDE_IN := 0.16
+const BARK_SLIDE_OUT := 0.20
+var _bark_t: float = 0.0
+var _bark_next: float = 8.0
+var _bark_last_hero: String = ""
+var _bark_recent: Array = []
+var _bark_seen: Dictionary = {}
+var _bark_seen_init: bool = false
+var _bark_intro_q: Array = []
 var _boss_prev_is_boss: bool = false
 var _boss_offer: Control = null
 var _boss_offer_box: Control = null
@@ -254,6 +278,7 @@ const PUNK_MIC_SUSTAIN := 0.10        # крик должен держаться
 var _punk_btn: Button = null
 var _punk_fill: ColorRect = null
 var _punk_shine: ColorRect = null       # блик-свип, когда заряд полон
+var _punk_total: float = 15.0           # фактическая длительность текущего панк-рока (для шкалы/таймера)
 var _punk_shine_t: float = 0.0
 var _punk_label: Label = null
 var _punk_layer: CanvasLayer = null
@@ -288,7 +313,8 @@ var _music_dist: AudioEffectDistortion = null
 
 
 func _ready() -> void:
-	_build_loading()   # лоадскрин поверх всего — прячет старт/устаканивание сцены
+	if not Game.store_shot_mode:
+		_build_loading()   # лоадскрин поверх всего — прячет старт/устаканивание сцены
 	_load_settings()
 	_load_textures()
 	_apply_fonts()
@@ -309,6 +335,9 @@ func _ready() -> void:
 	_build_settings()
 	_apply_settings()
 	_build_boss_ui()
+	_build_barks()
+	if DOCK_STUB_ENABLED:
+		_build_dock_stub()
 	_build_prestige()
 	_build_tutorial()
 
@@ -322,7 +351,7 @@ func _ready() -> void:
 	Game.prestige_changed.connect(_refresh_prestige)
 	Game.boss_bells_awarded.connect(_on_boss_bells_awarded)
 	Game.daily_changed.connect(func(): _refresh_daily(); _refresh_daily_btn())
-	Economy.bells_changed.connect(func(_v): _refresh(); _refresh_prestige())
+	Economy.bells_changed.connect(func(_v): _on_bells_top_changed(_v); _refresh(); _refresh_prestige())
 	Game.stats_changed.connect(func(): _refresh())   # карточки обновляем, не пересоздаём (живая анимация)
 	Game.hero_attacked.connect(_on_hero_attacked)
 	Game.punk_charge_changed.connect(_on_punk_charge)
@@ -338,10 +367,11 @@ func _ready() -> void:
 	_refresh()
 	_build_daily()
 	_refresh_daily_btn()
-	# Гладкий старт: интро играет ПОД уход лоадскрина; окна — строго после него, по одному
-	get_tree().create_timer(1.2).timeout.connect(_intro)
-	get_tree().create_timer(2.2).timeout.connect(_start_flow)
-	get_tree().create_timer(3.6, true, false, true).timeout.connect(_late_hooks.bind(0))
+	if not Game.store_shot_mode:
+		# Гладкий старт: интро играет ПОД уход лоадскрина; окна — строго после него, по одному
+		get_tree().create_timer(1.2).timeout.connect(_intro)
+		get_tree().create_timer(2.2).timeout.connect(_start_flow)
+		get_tree().create_timer(3.6, true, false, true).timeout.connect(_late_hooks.bind(0))
 	_apply_safe_area.call_deferred()      # отступы под вырез/системные бары
 	get_viewport().size_changed.connect(_apply_safe_area)   # переприменять при готовности/ресайзе окна
 
@@ -380,6 +410,7 @@ func _apply_safe_area() -> void:
 	_sa_set("PunkSlot", -500.0 - bd, -436.0 - bd)
 	_sa_set("TroupeRail", -428.0 - bd, -132.0 - bd)
 	_sa_set("ActionBar", -120.0 - bd, -64.0 - bd)
+	_apply_bark_layout(bd)
 	var bg := get_node_or_null("%BgRect") as Control
 	if bg: bg.offset_bottom = -516.0 - bd
 
@@ -494,6 +525,7 @@ func _apply_styles() -> void:
 	_lab(_bells_label, F_RES, Color("#c9a0dc"))
 	if _gold_tex: _gold_icon = _decorate_res_label(_gold_label, _gold_tex)
 	if _skull_tex: _skull_icon_top = _decorate_res_label(_bells_label, _skull_tex)
+	_sync_bells_topbar()
 	_lab(_skulls_label, F_RES, Color("#cdbfd6"))
 	_lab(_title_label, F_TITLE, GOLD)
 	_lab(_boss_label, F_BOSS, BLOOD)
@@ -911,11 +943,24 @@ func _on_rewarded(placement: String) -> void:
 		_collect_offline(2.0)        # ролик досмотрен — копилка удвоена
 	if _reward_btn: _reward_btn.disabled = false
 
+func _sync_bells_topbar() -> void:
+	if not is_instance_valid(_bells_label):
+		return
+	_displayed_bells_top = float(Economy.bells)
+	_bells_label.text = "%d" % Economy.bells
+
+
+func _on_bells_top_changed(_v: int) -> void:
+	# На паузе _process не тикает — синхронизируем счётчик сразу.
+	if get_tree().paused:
+		_sync_bells_topbar()
+
+
 func _on_reward_failed(p: String) -> void:
-	_toast("Тишина в эфире — реклама сейчас недоступна, загляни позже.")
+	_toast("Реклама недоступна — попробуй позже.", 2.6, true)
 	if p == "boss_time":
-		get_tree().paused = false
-		_apply_boss_loss()           # реклама не вышла — засчитываем поражение
+		get_tree().paused = true
+		_show_boss_offer()           # не наказываем за офлайн — снова выбор: ролик / сдаться
 	elif p == "boss_dmg":
 		if is_instance_valid(_boss_ad_btn):
 			_boss_ad_btn.disabled = false
@@ -1040,7 +1085,7 @@ func _punk_visual() -> void:
 	var col: Color
 	var txt: String
 	if Game.punk_active:
-		ratio = clampf(Game.punk_time_left / Balance.PUNK_DURATION_SEC, 0.0, 1.0)
+		ratio = clampf(Game.punk_time_left / _punk_total, 0.0, 1.0)
 		col = Color(1.0, 0.78, 0.2, 0.55)
 		txt = "★ ПАНК-РОК! %.0f" % max(0.0, Game.punk_time_left)
 	elif _punk_holding:
@@ -1067,12 +1112,16 @@ func _punk_visual() -> void:
 func _on_punk_charge(_r: float) -> void:
 	_punk_visual()
 
-func _on_punk_state(active: bool, _t: float) -> void:
+func _on_punk_state(active: bool, t: float) -> void:
 	_punk_target = 1.0 if active else 0.0
+	if active:
+		_punk_total = maxf(0.001, t)   # актуальная длительность (с бонусом «барабана»)
 	if active and not _punk_prev_active:
 		_punk_entrance()
 		if _tut_step >= 0:
 			_tut_finish()   # первый реальный ХОЙ завершает туториал
+		else:
+			_bark_event("punk")
 	_punk_prev_active = active
 	_punk_visual()
 
@@ -1253,6 +1302,7 @@ func _on_enemy_changed(hp: float, max_hp: float) -> void:
 func _on_boss_changed(is_boss: bool, time_left: float) -> void:
 	if is_boss and not _boss_prev_is_boss:
 		_boss_telegraph()                 # босс появился — телеграф
+		_bark_event("boss")
 	_boss_prev_is_boss = is_boss
 	_boss_label.visible = is_boss
 	_pips.visible = not is_boss
@@ -1315,6 +1365,7 @@ func _refresh() -> void:
 func _process(delta: float) -> void:
 	if _coin_cd > 0.0:
 		_coin_cd -= delta
+	_bark_tick(delta)
 	# Призрак урона плавно догоняет реальную полосу (пропорционально — без «ползучести»)
 	if _hp_ghost_ratio > _hp_ratio + 0.0005:
 		_hp_ghost_ratio = max(_hp_ratio, lerp(_hp_ghost_ratio, _hp_ratio, clampf(delta * 6.0, 0.0, 1.0)))
@@ -1329,7 +1380,7 @@ func _process(delta: float) -> void:
 			_displayed_gold = Economy.gold
 		_gold_label.text = fmt(_displayed_gold)                       # только число — в него летят монеты
 	# черепа — крутящийся счётчик в топбаре (в него летят черепа с боссов)
-	if is_instance_valid(_bells_label) and int(round(_displayed_bells_top)) != Economy.bells:
+	if is_instance_valid(_bells_label):
 		_displayed_bells_top = lerp(_displayed_bells_top, float(Economy.bells), clampf(delta * 7.0, 0.0, 1.0))
 		if absf(_displayed_bells_top - float(Economy.bells)) < 1.0:
 			_displayed_bells_top = float(Economy.bells)
@@ -1348,6 +1399,24 @@ func _process(delta: float) -> void:
 
 # Логика панк-рока: удержание (фолбэк), окно прослушки крика, плавность эффекта
 func _process_punk(delta: float) -> void:
+	if Game.store_shot_mode:
+		if Game.trailer_mode and (Game.punk_active or _punk_intensity > 0.001):
+			_punk_intensity = move_toward(_punk_intensity, _punk_target, delta * 5.0)
+			_punk_beat_t += delta
+			var phase: float = fmod(_punk_beat_t, 0.5) / 0.5
+			var beat: float = maxf(0.0, 1.0 - phase * 1.4)
+			if is_instance_valid(_punk_rect) and is_instance_valid(_punk_mat):
+				_punk_rect.visible = _punk_intensity > 0.001
+				_punk_mat.set_shader_parameter("intensity", _punk_intensity)
+				_punk_mat.set_shader_parameter("beat", beat)
+			_punk_visual()
+		else:
+			_punk_intensity = _punk_target
+			if is_instance_valid(_punk_rect) and is_instance_valid(_punk_mat):
+				_punk_rect.visible = _punk_intensity > 0.001
+				_punk_mat.set_shader_parameter("intensity", _punk_intensity)
+				_punk_mat.set_shader_parameter("beat", _punk_beat_t)
+		return
 	# удержание кнопки → заполнение до 5с → запуск БЕЗ крика
 	if _punk_holding:
 		_punk_press_t += delta
@@ -1463,6 +1532,253 @@ func _process_parallax(delta: float) -> void:
 	if is_instance_valid(_enemy) and _enemy_home_set:
 		_enemy.position = _enemy_home + _enemy_shake_off + _enemy_parallax
 
+# --- Барки труппы + док-стаб «Скоро» -----------------------------------------
+func _build_barks() -> void:
+	_bark_layer = CanvasLayer.new()
+	_bark_layer.layer = 45   # выше игры, ниже модалок; не блокирует
+	add_child(_bark_layer)
+	# Полоса над PunkSlot (тот на -500…-436); низ полосы -522 → ~22 px зазор
+	_bark_wrap = Control.new()
+	_bark_wrap.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_bark_wrap.offset_top = -622.0
+	_bark_wrap.offset_bottom = -522.0
+	_bark_wrap.clip_contents = true
+	_bark_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bark_layer.add_child(_bark_wrap)
+	_bark_box = PanelContainer.new()
+	_bark_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bark_box.add_theme_stylebox_override("panel", _flat(SURF, SURF_BORDER, 18, 2, 12))
+	_bark_box.visible = false
+	_bark_wrap.add_child(_bark_box)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 12)
+	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bark_box.add_child(hb)
+	_bark_ring = Panel.new()   # кольцо-акцент вокруг круглого портрета
+	_bark_ring.custom_minimum_size = Vector2(62, 62)
+	_bark_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bark_ring.add_theme_stylebox_override("panel", _flat(GOLD, GOLD, 999, 0, 0))
+	hb.add_child(_bark_ring)
+	_bark_portrait = TextureRect.new()
+	_bark_portrait.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_bark_portrait.offset_left = 3; _bark_portrait.offset_top = 3
+	_bark_portrait.offset_right = -3; _bark_portrait.offset_bottom = -3
+	_bark_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_bark_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_bark_portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sh := Shader.new()   # круговая маска портрета
+	sh.code = "shader_type canvas_item;\nvoid fragment(){ vec2 c = UV - vec2(0.5); if (dot(c, c) > 0.25) discard; COLOR = texture(TEXTURE, UV); }\n"
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	_bark_portrait.material = mat
+	_bark_ring.add_child(_bark_portrait)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 2)
+	vb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_child(vb)
+	_bark_name = Label.new()
+	_lab(_bark_name, F_BODY, GOLD)
+	_bark_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(_bark_name)
+	_bark_text = Label.new()
+	_lab(_bark_text, F_BODY, TXT)
+	_bark_text.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_bark_text.custom_minimum_size = Vector2(460, 0)
+	_bark_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_bark_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(_bark_text)
+	_bark_next = randf_range(6.0, 12.0)
+
+
+func _apply_bark_layout(bd: float) -> void:
+	if not is_instance_valid(_bark_wrap):
+		return
+	const GAP := 22.0
+	const H := 100.0
+	var punk_top: float = -500.0 - bd
+	_bark_wrap.offset_bottom = punk_top - GAP
+	_bark_wrap.offset_top = punk_top - GAP - H
+
+
+func _bark_prep_layout() -> void:
+	if not is_instance_valid(_bark_text) or not is_instance_valid(_bark_wrap):
+		return
+	var rail_w: float = maxf(_bark_wrap.size.x, get_viewport().get_visible_rect().size.x)
+	var text_w: float = maxf(240.0, rail_w - 100.0)
+	_bark_text.custom_minimum_size.x = text_w
+
+
+func _bark_rest_x() -> float:
+	if not is_instance_valid(_bark_wrap) or not is_instance_valid(_bark_box):
+		return 16.0
+	var rail_w: float = maxf(_bark_wrap.size.x, get_viewport().get_visible_rect().size.x)
+	return maxf(16.0, (rail_w - _bark_box.size.x) * 0.5)
+
+
+func _bark_rest_y() -> float:
+	if not is_instance_valid(_bark_wrap) or not is_instance_valid(_bark_box):
+		return 0.0
+	return maxf(0.0, (_bark_wrap.size.y - _bark_box.size.y) * 0.5)
+
+func _bark_tick(delta: float) -> void:
+	if Game.store_shot_mode:
+		return
+	if not is_instance_valid(_bark_box):
+		return
+	_bark_intro_scan()
+	if _tut_step >= 0:
+		return
+	if _bark_box.visible:
+		return
+	if not _bark_intro_q.is_empty():
+		var hid: String = _bark_intro_q.pop_front()
+		_bark_show(hid, Barks.INTRO.get(hid, ""))
+		return
+	_bark_t += delta
+	if _bark_t >= _bark_next:
+		_bark_t = 0.0
+		_bark_next = randf_range(24.0, 40.0)
+		_bark_fire_idle()
+
+func _bark_intro_scan() -> void:
+	# первый проход помечает уже нанятых «виденными» без спама; далее — очередь при новом найме
+	for aid in Game.ALLY_ORDER:
+		if Game.ally_levels.get(aid, 0) > 0 and not _bark_seen.has(aid):
+			_bark_seen[aid] = true
+			if _bark_seen_init and Barks.INTRO.has(aid):
+				_bark_intro_q.append(aid)
+	_bark_seen_init = true
+
+func _bark_fire_idle() -> void:
+	var owned: Array = []
+	for aid in Game.ALLY_ORDER:
+		if Game.ally_levels.get(aid, 0) > 0 and Barks.BARKS.has(aid):
+			owned.append(aid)
+	if owned.is_empty():
+		return
+	var pool: Array = owned.duplicate()
+	if pool.size() > 1 and _bark_last_hero in pool:
+		pool.erase(_bark_last_hero)   # не тот же герой подряд
+	var hid: String = pool[randi() % pool.size()]
+	_bark_last_hero = hid
+	var lines: Array = Barks.GENERIC if randf() < 0.30 else Barks.BARKS[hid]
+	var choices: Array = []
+	for ln in lines:
+		if not (ln in _bark_recent):
+			choices.append(ln)
+	if choices.is_empty():
+		choices = lines
+	var line: String = choices[randi() % choices.size()]
+	_bark_recent.append(line)
+	while _bark_recent.size() > 6:
+		_bark_recent.pop_front()
+	_bark_show(hid, line)
+
+# Event-барк (перебивает текущий пузырь, сбрасывает idle-таймер)
+func _bark_event(kind: String) -> void:
+	if not is_instance_valid(_bark_box) or _tut_step >= 0:
+		return
+	var pool: Array = Barks.EVENT.get(kind, [])
+	if pool.is_empty():
+		return
+	var owned: Array = []
+	for aid in Game.ALLY_ORDER:
+		if Game.ally_levels.get(aid, 0) > 0:
+			owned.append(aid)
+	var hid: String = owned[randi() % owned.size()] if not owned.is_empty() else "jester"
+	_bark_t = 0.0
+	_bark_show(hid, pool[randi() % pool.size()])
+
+func _bark_show(hid: String, line: String, freeze: bool = false) -> void:
+	if not is_instance_valid(_bark_box) or line == "":
+		return
+	var col: Color = ALLY_COLORS.get(hid, GOLD)
+	_bark_ring.add_theme_stylebox_override("panel", _flat(col, col, 999, 0, 0))
+	if _ally_tex.has(hid):
+		_bark_portrait.texture = _ally_tex[hid]
+	_bark_name.text = String(Game.ALLIES.get(hid, {}).get("name", ""))
+	_bark_name.add_theme_color_override("font_color", col)
+	_bark_text.text = line
+	_bark_prep_layout()
+	_bark_box.visible = true
+	_bark_box.modulate.a = 1.0
+	if _bark_tw and _bark_tw.is_valid():
+		_bark_tw.kill()
+	if freeze:
+		call_deferred("_bark_freeze_at_rest")
+	else:
+		call_deferred("_bark_play_slide")
+
+
+func _bark_freeze_at_rest() -> void:
+	if not is_instance_valid(_bark_box) or not is_instance_valid(_bark_wrap):
+		return
+	await get_tree().process_frame
+	if not is_instance_valid(_bark_box):
+		return
+	_bark_box.position = Vector2(_bark_rest_x(), _bark_rest_y())
+
+
+func _bark_play_slide() -> void:
+	if not is_instance_valid(_bark_box) or not is_instance_valid(_bark_wrap):
+		return
+	await get_tree().process_frame
+	var rest_x: float = _bark_rest_x()
+	var rest_y: float = _bark_rest_y()
+	var exit_x: float = maxf(_bark_wrap.size.x, get_viewport().get_visible_rect().size.x) + 24.0
+	_bark_box.position = Vector2(-_bark_box.size.x - 24.0, rest_y)
+	_bark_tw = create_tween()
+	_bark_tw.tween_property(_bark_box, "position:x", rest_x, BARK_SLIDE_IN)\
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_bark_tw.tween_interval(BARK_DWELL)
+	_bark_tw.tween_property(_bark_box, "position:x", exit_x, BARK_SLIDE_OUT)\
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	_bark_tw.tween_callback(func():
+		if is_instance_valid(_bark_box):
+			_bark_box.visible = false)
+
+# Заглушка навигации-дока (превью боковой навигации; пункты → «Скоро»)
+func _build_dock_stub() -> void:
+	var dock := VBoxContainer.new()
+	dock.name = "DockStub"
+	dock.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	dock.anchor_left = 1.0
+	dock.anchor_right = 1.0
+	dock.offset_left = -92.0
+	dock.offset_right = -14.0
+	dock.offset_top = 404.0
+	dock.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	dock.add_theme_constant_override("separation", 12)
+	add_child(dock)
+	var cap := Label.new()
+	_lab(cap, F_SMALL, MUTED)
+	cap.text = "СКОРО"
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	dock.add_child(cap)
+	for item in ["Заказы", "Коллекция", "Сундук"]:
+		var cell := VBoxContainer.new()
+		cell.add_theme_constant_override("separation", 2)
+		dock.add_child(cell)
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(56, 56)
+		b.focus_mode = Control.FOCUS_NONE
+		b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		var sb := _flat(SURF, SURF_BORDER, 999, 2, 0)
+		b.add_theme_stylebox_override("normal", sb)
+		b.add_theme_stylebox_override("hover", sb)
+		b.add_theme_stylebox_override("pressed", _flat(SURF_BORDER, GOLD, 999, 2, 0))
+		var nm: String = item
+		b.pressed.connect(func(): _toast("«%s» — скоро!" % nm))
+		cell.add_child(b)
+		var lb := Label.new()
+		_lab(lb, 15, MUTED)
+		lb.text = item
+		lb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lb.custom_minimum_size = Vector2(78, 0)
+		cell.add_child(lb)
+
 # --- Босс: телеграф / победа / поражение -------------------------------------
 func _build_boss_ui() -> void:
 	_boss_layer = CanvasLayer.new()
@@ -1473,6 +1789,8 @@ func _build_boss_ui() -> void:
 func _boss_telegraph() -> void:
 	if not is_instance_valid(_boss_layer):
 		return
+	if is_instance_valid(_boss_banner):
+		_boss_banner.queue_free()   # новый баннер перебивает предыдущий — без наложения
 	var flash := ColorRect.new()
 	flash.color = Color(BLOOD.r, BLOOD.g, BLOOD.b, 0.45)
 	flash.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1496,7 +1814,8 @@ func _boss_telegraph() -> void:
 	l.scale = Vector2(1.8, 1.8)
 	l.modulate.a = 0.0
 	_boss_layer.add_child(l)
-	var tw := create_tween()
+	_boss_banner = l
+	var tw := l.create_tween()   # твин привязан к ноде — умирает вместе с ней (без «tween on freed»)
 	tw.set_parallel(true)
 	tw.tween_property(l, "scale", Vector2.ONE, 0.15).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.tween_property(l, "modulate:a", 1.0, 0.10)
@@ -1509,11 +1828,14 @@ func _boss_telegraph() -> void:
 func _boss_beat(title: String, subtitle: String, col: Color) -> void:
 	if not is_instance_valid(_boss_layer):
 		return
+	if is_instance_valid(_boss_banner):
+		_boss_banner.queue_free()   # победа/поражение перебивает телеграф «БОСС!»
 	Engine.time_scale = 0.40
 	var holder := Control.new()
 	holder.set_anchors_preset(Control.PRESET_FULL_RECT)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_boss_layer.add_child(holder)
+	_boss_banner = holder
 	var vb := VBoxContainer.new()
 	vb.alignment = BoxContainer.ALIGNMENT_CENTER
 	vb.add_theme_constant_override("separation", 6)
@@ -1538,7 +1860,7 @@ func _boss_beat(title: String, subtitle: String, col: Color) -> void:
 	holder.set_pivot_offset(get_viewport().get_visible_rect().size * 0.5)
 	holder.scale = Vector2(0.82, 0.82)
 	holder.modulate.a = 0.0
-	var tw := create_tween()
+	var tw := holder.create_tween()   # твин на ноде — гибнет вместе с баннером при перебивке
 	tw.set_ignore_time_scale(true)
 	tw.set_parallel(true)
 	tw.tween_property(holder, "modulate:a", 1.0, 0.12)
@@ -1743,7 +2065,13 @@ func _fade_transition(mid: Callable, caption: String = "", caption_col: Color = 
 func _snap_scene_visuals() -> void:
 	if _enemy_tw and _enemy_tw.is_valid():
 		_enemy_tw.kill()   # недоигранная анимация смерти не перезапишет новый вид
-	_update_enemy_visual()          # текстура врага + фон локации
+	if Game.store_shot_mode:
+		# tools/store_shots.gd задаёт врага явно — не рандомить поверх
+		var li: int = (Game.location() - 1) % LOC_BG_PATHS.size()
+		if _loc_bg.has(li) and is_instance_valid(_bgrect):
+			_bgrect.texture = _loc_bg[li]
+	else:
+		_update_enemy_visual()          # текстура врага + фон локации
 	if is_instance_valid(_enemy):
 		_enemy.scale = Vector2.ONE
 		_enemy.modulate.a = 1.0
@@ -2429,8 +2757,8 @@ func _show_klad_tip(msg: String) -> void:
 	t.tween_property(box, "modulate:a", 0.0, 0.4)
 	t.tween_callback(func(): if is_instance_valid(layer): layer.queue_free())
 
-# Короткий тост внизу экрана (напр. реклама недоступна)
-func _toast(msg: String, secs: float = 2.4) -> void:
+# Короткий тост (реклама недоступна и пр.). centered=true — по центру экрана.
+func _toast(msg: String, secs: float = 2.6, centered: bool = false) -> void:
 	if is_instance_valid(_toast_layer):
 		_toast_layer.queue_free()
 	_toast_layer = CanvasLayer.new()
@@ -2438,20 +2766,28 @@ func _toast(msg: String, secs: float = 2.4) -> void:
 	_toast_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(_toast_layer)
 	var mc := MarginContainer.new()
-	mc.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	mc.offset_top = -640.0
-	mc.offset_bottom = -560.0
-	mc.add_theme_constant_override("margin_left", 40)
-	mc.add_theme_constant_override("margin_right", 40)
+	if centered:
+		mc.set_anchors_preset(Control.PRESET_CENTER)
+		mc.offset_left = -360.0
+		mc.offset_right = 360.0
+		mc.offset_top = -72.0
+		mc.offset_bottom = 72.0
+	else:
+		mc.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+		mc.offset_top = -196.0
+		mc.offset_bottom = -72.0
+	mc.add_theme_constant_override("margin_left", 32)
+	mc.add_theme_constant_override("margin_right", 32)
 	_toast_layer.add_child(mc)
 	var box := PanelContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 16, 2, 14))
-	box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	mc.add_child(box)
 	var lbl := Label.new()
 	lbl.text = msg
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_lab(lbl, F_BODY, TXT)
 	box.add_child(lbl)
 	box.modulate.a = 0.0
@@ -3585,6 +3921,267 @@ func _frame_pop(f) -> void:
 
 
 const _UNITS := ["", "K", "M", "B", "T", "aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai", "aj", "ak", "al", "am", "an", "ao", "ap", "aq", "ar", "as", "at", "au", "av", "aw", "ax", "ay", "az"]
+
+
+# --- Store listing screenshots (tools/store_shots.gd) ------------------------
+func store_shot_clean_ui() -> void:
+	_tut_done = true
+	_welcome_seen = true
+	_daily_intro_seen = true
+	_prestige_intro_seen = true
+	_klad_hint_seen = true
+	_review_asked = true
+	_tut_step = -1
+	get_tree().paused = false
+	Game.last_offline_income = 0.0
+	if is_instance_valid(_tut_layer):
+		_tut_layer.visible = false
+	if is_instance_valid(_tut_rect):
+		_tut_rect.visible = false
+	if is_instance_valid(_tut_bubble):
+		_tut_bubble.visible = false
+	if is_instance_valid(_bark_box):
+		_bark_box.visible = false
+	if is_instance_valid(_bark_layer):
+		_bark_layer.visible = false
+	if is_instance_valid(_boss_banner):
+		_boss_banner.queue_free()
+		_boss_banner = null
+	if is_instance_valid(_offline_root):
+		_offline_root.queue_free()
+		_offline_root = null
+		_offline_panel = null
+	if is_instance_valid(_listen_overlay):
+		_show_listen_overlay(false)
+	if is_instance_valid(_punk_layer):
+		for c in _punk_layer.get_children():
+			if c != _punk_rect and c != _listen_overlay:
+				c.queue_free()
+	Game.punk_active = false
+	Game.punk_time_left = 0.0
+	_punk_listening = false
+	_punk_target = 0.0
+	_punk_intensity = 0.0
+	if is_instance_valid(_punk_rect):
+		_punk_rect.visible = false
+	store_shot_finish_boot()
+
+
+func store_shot_finish_boot() -> void:
+	var items: Array = [_bgrect, get_node_or_null("%TopBar"), get_node_or_null("%Title"),
+		_arena, get_node_or_null("%TroupeRail"), _action_bar]
+	for n in items:
+		if is_instance_valid(n):
+			n.modulate.a = 1.0
+
+
+func store_shot_set_enemy(enemy_id: String) -> void:
+	_current_enemy = enemy_id
+	if _enemy_textures.has(enemy_id) and is_instance_valid(_enemy):
+		_enemy.texture = _enemy_textures[enemy_id]
+	var li: int = (Game.location() - 1) % LOC_BG_PATHS.size()
+	if _loc_bg.has(li) and is_instance_valid(_bgrect):
+		_bgrect.texture = _loc_bg[li]
+	_on_enemy_changed(Game.enemy_hp, Game.enemy_max_hp)
+
+
+func store_shot_hoy_listen() -> void:
+	Game.punk_charge = 1.0
+	Game.punk_charge_changed.emit(1.0)
+	_punk_listening = true
+	_punk_listen_t = 2.9
+	_mic_level = 0.0
+	_show_listen_overlay(true)
+	if is_instance_valid(_listen_overlay):
+		_listen_overlay.modulate.a = 1.0
+	if is_instance_valid(_listen_num):
+		_listen_num.text = "3"
+	if is_instance_valid(_listen_perm_btn):
+		_listen_perm_btn.visible = false
+	_punk_visual()
+	if is_instance_valid(_listen_ring):
+		_listen_ring.queue_redraw()
+
+
+func store_shot_punk_rage() -> void:
+	Game.punk_active = true
+	Game.punk_time_left = 11.0
+	Game.punk_charge = 0.0
+	Game.punk_state_changed.emit(true, 11.0)
+	_punk_prev_active = true
+	_punk_target = 1.0
+	_punk_intensity = 0.92
+	_punk_beat_t = 0.35
+	if is_instance_valid(_punk_rect):
+		_punk_rect.visible = true
+	if is_instance_valid(_punk_mat):
+		_punk_mat.set_shader_parameter("intensity", 0.92)
+		_punk_mat.set_shader_parameter("beat", 0.35)
+	_punk_visual()
+
+
+func store_shot_open_prestige() -> void:
+	if not is_instance_valid(_prestige_panel):
+		return
+	_displayed_bells = float(Economy.bells)
+	if is_instance_valid(_prestige_step1):
+		_prestige_step1.visible = true
+	if is_instance_valid(_prestige_step2):
+		_prestige_step2.visible = false
+	if is_instance_valid(_prestige_leftover):
+		_prestige_leftover.visible = false
+	_refresh_prestige()
+	_prestige_panel.visible = true
+	_prestige_panel.modulate.a = 1.0
+	if is_instance_valid(_prestige_box):
+		_prestige_box.scale = Vector2.ONE
+
+
+func store_shot_open_daily() -> void:
+	if not is_instance_valid(_daily_panel):
+		return
+	_refresh_daily()
+	_daily_panel.visible = true
+	_daily_panel.modulate.a = 1.0
+	if is_instance_valid(_daily_box):
+		_daily_box.scale = Vector2.ONE
+
+
+func store_shot_show_bark(hid: String, line: String) -> void:
+	if is_instance_valid(_bark_layer):
+		_bark_layer.visible = true
+	_bark_show(hid, line, true)
+
+
+func store_shot_show_toast(msg: String) -> void:
+	_toast(msg, 99.0, true)
+
+
+# --- Трейлер: режиссёрские хелперы ------------------------------------------
+func trailer_tap(force_crit: bool = false) -> void:
+	var res: Dictionary = Game.player_tap()
+	var show_crit: bool = bool(res.crit) or force_crit
+	_spawn_damage_number(res.damage, show_crit)
+	_flash_enemy()
+	if show_crit:
+		_shake_enemy()
+
+
+func trailer_burst_taps(n: int, crit_every: int = 3) -> void:
+	for i in n:
+		trailer_tap(crit_every > 0 and (i % crit_every) == 0)
+
+
+func trailer_set_scene(stage: int, enemy_id: String, hp_ratio: float = 0.85, boss_time: float = -1.0) -> void:
+	_show_listen_overlay(false)
+	_punk_listening = false
+	if is_instance_valid(_bark_box):
+		_bark_box.visible = false
+	var opts := {
+		"stage": stage,
+		"tap": Game.tap_level,
+		"allies": Game.ally_levels.duplicate(),
+		"gold": Economy.gold,
+		"bells": Economy.bells,
+		"enemy_hp_ratio": hp_ratio,
+		"punk_charge": Game.punk_charge,
+	}
+	if boss_time >= 0.0:
+		opts["boss_time"] = boss_time
+	Game.trailer_hold_spawn = true
+	Game.setup_store_shot(opts)
+	_snap_scene_visuals()
+	store_shot_set_enemy(enemy_id)
+	_refresh()
+	_punk_visual()
+
+
+func trailer_prepare_kill() -> void:
+	# почти убит — следующий тап/удар добьёт с соком
+	Game.enemy_hp = maxf(1.0, Game.tap_damage() * Game.punk_dmg_mult() * 0.35)
+	Game.enemy_changed.emit(Game.enemy_hp, Game.enemy_max_hp)
+
+
+func trailer_punk(secs: float = 4.0) -> void:
+	_show_listen_overlay(false)
+	_punk_listening = false
+	Game.punk_charge = 1.0
+	Game.trailer_activate_punk(secs)
+	_punk_prev_active = true
+	_punk_target = 1.0
+	_punk_intensity = 0.95
+	_punk_beat_t = 0.0
+	_punk_entrance()
+	_punk_visual()
+
+
+func trailer_upgrade_tap(n: int = 1) -> void:
+	if Game.buy_tap_n(n):
+		_refresh()
+		if is_instance_valid(_klinok_w) and _klinok_w.has("cost"):
+			_fly_coins(_global_center(_gold_label), _global_center(_klinok_w.cost), 8, GOLD)
+
+
+func trailer_upgrade_ally(aid: String, n: int = 1) -> void:
+	for _i in n:
+		if not Game.buy_ally(aid):
+			break
+	_refresh()
+	if _card_widgets.has(aid) and is_instance_valid(_card_widgets[aid].get("cost")):
+		_fly_coins(_global_center(_gold_label), _global_center(_card_widgets[aid].cost), 8, GOLD)
+
+
+func trailer_show_bark(hid: String, line: String) -> void:
+	store_shot_show_bark(hid, line)
+
+
+# Шут орёт в камеру — открытие рекламного клипа (как на стор-скрине).
+func trailer_jester_open() -> void:
+	_show_listen_overlay(false)
+	_punk_listening = false
+	if is_instance_valid(_bark_box):
+		_bark_box.visible = false
+	# чистим прошлый сплэш
+	if is_instance_valid(_punk_layer):
+		for c in _punk_layer.get_children():
+			if String(c.name).begins_with("TrailerJester"):
+				c.queue_free()
+	var dim := ColorRect.new()
+	dim.name = "TrailerJesterDim"
+	dim.color = Color(0.05, 0.02, 0.08, 0.55)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_punk_layer.add_child(dim)
+	var slam := Label.new()
+	slam.name = "TrailerJesterHoy"
+	slam.text = "ХОЙ!"
+	slam.set_anchors_preset(Control.PRESET_FULL_RECT)
+	slam.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	slam.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	slam.add_theme_font_size_override("font_size", 160)
+	slam.add_theme_color_override("font_color", Color("#ffd23a"))
+	slam.add_theme_constant_override("outline_size", 18)
+	slam.add_theme_color_override("font_outline_color", BLOOD)
+	if _header_font:
+		slam.add_theme_font_override("font", _header_font)
+	slam.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	slam.set_pivot_offset(get_viewport().get_visible_rect().size * 0.5)
+	slam.scale = Vector2(2.4, 2.4)
+	slam.modulate.a = 0.0
+	_punk_layer.add_child(slam)
+	var st := create_tween()
+	st.set_parallel(true)
+	st.tween_property(slam, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	st.tween_property(slam, "modulate:a", 1.0, 0.12)
+
+
+func trailer_jester_close() -> void:
+	if not is_instance_valid(_punk_layer):
+		return
+	for c in _punk_layer.get_children():
+		if String(c.name).begins_with("TrailerJester"):
+			c.queue_free()
+
 
 func fmt(n: float) -> String:
 	if n < 1000.0:

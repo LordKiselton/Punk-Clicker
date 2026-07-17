@@ -26,7 +26,7 @@ var _pending_placement: String = ""
 var _reward_earned: bool = false
 var _want_show: bool = false
 var _showing: bool = false           # ролик реально показывается (не трогать сторожем)
-const RV_LOAD_TIMEOUT := 9.0         # сек ожидания загрузки — иначе отменяем (анти-фриз)
+const RV_LOAD_TIMEOUT := 5.0         # сек ожидания загрузки — иначе отменяем (анти-фриз)
 
 
 func _ready() -> void:

@@ -7,6 +7,12 @@
 # =============================================================================
 extends Node
 
+# Режим съёмки скринов стора (tools/store_shots.gd): без лоадскрина, без автобоя.
+var store_shot_mode: bool = false
+# Режиссёрский ролик (tools/trailer.gd): store_shot + тик панка/DPS, без рандомного спавна.
+var trailer_mode: bool = false
+var trailer_hold_spawn: bool = false   # убийство не спавнит следующего — ждём режиссёра
+
 signal stage_changed(stage: int, location: int)
 signal enemy_changed(hp: float, max_hp: float)
 signal enemy_killed
@@ -362,6 +368,23 @@ func activate_punk() -> bool:
 	return true
 
 
+# Короткий панк для трейлера (обходит punk_ready / полный заряд).
+func trailer_activate_punk(secs: float = 4.0) -> void:
+	punk_active = true
+	punk_time_left = maxf(0.5, secs)
+	punk_charge = 0.0
+	punk_charge_changed.emit(punk_charge)
+	punk_state_changed.emit(true, punk_time_left)
+
+
+func trailer_end_punk() -> void:
+	if not punk_active:
+		return
+	punk_active = false
+	punk_time_left = 0.0
+	punk_state_changed.emit(false, 0.0)
+
+
 # --- Prestige ----------------------------------------------------------------
 func _meta(id: String) -> int:
 	return int(meta_levels.get(id, 0))
@@ -494,11 +517,39 @@ func _hit_enemy(amount: float) -> void:
 	else:
 		enemy_changed.emit(enemy_hp, enemy_max_hp)
 
+func _trailer_tick(delta: float) -> void:
+	if punk_active:
+		punk_time_left -= delta
+		if punk_time_left <= 0.0:
+			punk_active = false
+			punk_time_left = 0.0
+			punk_state_changed.emit(false, 0.0)
+	var sp: float = punk_speed_mult()
+	var dm: float = punk_dmg_mult() * boss_ad_mult()
+	for id in ALLY_ORDER:
+		if ally_levels.get(id, 0) <= 0:
+			continue
+		_atk_timers[id] = float(_atk_timers.get(id, 0.0)) + delta * sp
+		var atk: float = ALLIES[id].get("atk", 0.6)
+		if _atk_timers[id] >= atk:
+			_atk_timers[id] -= atk
+			var dmg: float = ally_dps(id) * atk * dm
+			hero_attacked.emit(id, dmg)
+			_hit_enemy(dmg)
+	if is_boss and boss_time_left > 0.0 and not boss_pending_fail:
+		boss_time_left = maxf(0.0, boss_time_left - delta)
+		boss_changed.emit(true, boss_time_left)
+
+
 func _on_enemy_killed() -> void:
 	var was_boss: bool = is_boss
 	Economy.add_gold(_enemy_gold())
 	kills_on_stage += 1
 	enemy_killed.emit()   # инкремент ДО сигнала — пипсы доходят до конца
+	if trailer_mode and trailer_hold_spawn:
+		enemy_hp = 0.0
+		enemy_changed.emit(0.0, maxf(1.0, enemy_max_hp))
+		return
 	if kills_on_stage >= _enemies_needed():
 		_advance_stage()
 		if was_boss:
@@ -595,6 +646,10 @@ func buy_ally(id: String) -> bool:
 
 # --- Тик: idle-DPS + таймер босса -------------------------------------------
 func _process(delta: float) -> void:
+	if store_shot_mode:
+		if trailer_mode:
+			_trailer_tick(delta)
+		return
 	# телеметрия: активное время (на паузе _process не тикает) + панк-uptime
 	_tlm_t += delta
 	if punk_active:
@@ -741,6 +796,54 @@ func dev_boost_to_50() -> void:
 	stage_changed.emit(stage, location())
 	stats_changed.emit()
 	prestige_changed.emit()
+
+# Снимок состояния для скринов RuStore (tools/store_shots.gd).
+func setup_store_shot(opts: Dictionary) -> void:
+	stage = int(opts.get("stage", 1))
+	max_stage = maxi(int(opts.get("max_stage", stage)), stage)
+	kills_on_stage = int(opts.get("kills", 0))
+	tap_level = int(opts.get("tap", 0))
+	run_peak_stage = int(opts.get("run_peak_stage", stage))
+	bells_earned_total = float(opts.get("bells_earned_total", 0.0))
+	bells_pending = float(opts.get("bells_pending", 0.0))
+	boss_ad_active = false
+	boss_pending_fail = false
+	punk_active = false
+	punk_time_left = 0.0
+	for id in ALLY_ORDER:
+		ally_levels[id] = int(opts.get("allies", {}).get(id, 0))
+	for id in Balance.PRESTIGE_ORDER:
+		meta_levels[id] = int(opts.get("meta", {}).get(id, 0))
+	Economy.gold = float(opts.get("gold", 500.0))
+	Economy.bells = int(opts.get("bells", 0))
+	daily_day = int(opts.get("daily_day", 3))
+	daily_claims = int(opts.get("daily_claims", 2))
+	var now: int = int(Time.get_unix_time_from_system())
+	daily_last_day_id = int(opts.get("daily_last_day_id", _local_day_id(now) - 1))
+	daily_last_unix = int(opts.get("daily_last_unix", 0))
+	punk_charge = float(opts.get("punk_charge", 0.0))
+	_spawn_enemy()
+	if opts.has("enemy_hp_ratio"):
+		enemy_hp = enemy_max_hp * clampf(float(opts.enemy_hp_ratio), 0.05, 1.0)
+		enemy_changed.emit(enemy_hp, enemy_max_hp)
+	if opts.has("boss_time"):
+		boss_time_left = float(opts.boss_time)
+		boss_changed.emit(is_boss, boss_time_left)
+	if opts.get("punk_active", false):
+		punk_active = true
+		punk_time_left = float(opts.get("punk_time", 12.0))
+		punk_charge = 0.0
+		punk_state_changed.emit(true, punk_time_left)
+	else:
+		punk_state_changed.emit(false, 0.0)
+		punk_charge_changed.emit(punk_charge)
+	stage_changed.emit(stage, location())
+	stats_changed.emit()
+	prestige_changed.emit()
+	daily_changed.emit()
+	Economy.gold_changed.emit(Economy.gold)
+	Economy.bells_changed.emit(Economy.bells)
+
 
 func reset_progress() -> void:
 	# Полный сброс прогресса (из настроек)

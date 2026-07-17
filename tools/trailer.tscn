@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3 uid="uid://trailer_balagan"]
+
+[ext_resource type="Script" path="res://tools/trailer.gd" id="1"]
+
+[node name="Trailer" type="Node"]
+script = ExtResource("1")
+mode = "long"
