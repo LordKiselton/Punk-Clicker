@@ -23,6 +23,7 @@ signal stats_changed   # урон/DPS/стоимости поменялись (�
 signal hero_attacked(id: String, amount: float)   # герой ударил (дискретно)
 signal punk_charge_changed(ratio: float)           # заряд панк-рока 0..1
 signal punk_state_changed(active: bool, time_left: float)  # режим вкл/выкл + остаток
+signal combo_changed(hits: int, mult: float, tier_up: bool)  # комбо тапа
 signal prestige_changed                            # черепа/дерево обновились
 signal boss_bells_awarded(amount: int)             # черепа реально начислены с босса (для полёта)
 signal daily_changed                               # афиша дня: клейм/смена дня
@@ -66,6 +67,10 @@ var _atk_timers: Dictionary = {}       # id -> накопленное время
 var punk_charge: float = 0.0           # 0..1, копится от тапов игрока
 var punk_active: bool = false
 var punk_time_left: float = 0.0
+
+# --- Комбо тапа --------------------------------------------------------------
+var combo_hits: int = 0
+var combo_timer: float = 0.0           # секунд до сброса; >0 пока комбо живо
 
 # --- Prestige ----------------------------------------------------------------
 const SAVE_VERSION: int = 1
@@ -279,6 +284,27 @@ func punk_speed_mult() -> float:
 func punk_gold_mult() -> float:
 	return Balance.PUNK_GOLD_MULT if punk_active else 1.0
 
+func combo_mult() -> float:
+	return Balance.combo_mult_for_hits(combo_hits)
+
+func reset_combo(silent: bool = false) -> void:
+	if combo_hits == 0 and combo_timer <= 0.0:
+		return
+	combo_hits = 0
+	combo_timer = 0.0
+	if not silent:
+		combo_changed.emit(0, 1.0, false)
+
+func _register_combo_hit() -> Dictionary:
+	var prev_tier: int = Balance.combo_tier_index(combo_hits)
+	combo_hits += 1
+	combo_timer = Balance.COMBO_GRACE_SEC
+	var mult: float = combo_mult()
+	var tier: int = Balance.combo_tier_index(combo_hits)
+	var tier_up: bool = tier > prev_tier and tier >= 0
+	combo_changed.emit(combo_hits, mult, tier_up)
+	return {"hits": combo_hits, "mult": mult, "tier_up": tier_up}
+
 # --- «Афиша дня»: ежедневная награда + прибытие гастролёров -------------------
 func _local_day_id(unix: int) -> int:
 	var bias: int = Time.get_time_zone_from_system().get("bias", 0)   # минуты от UTC
@@ -289,6 +315,18 @@ func daily_available() -> bool:
 	if now < daily_last_unix:          # часы перевели назад — ждём реального времени
 		return false
 	return _local_day_id(now) > daily_last_day_id
+
+
+## Секунд до следующей афиши (0 = уже можно забирать).
+func secs_until_daily() -> int:
+	if daily_available():
+		return 0
+	var now: int = int(Time.get_unix_time_from_system())
+	var bias_sec: int = int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+	# следующий day_id после последнего клейма начинается на границе суток
+	var target_day: int = daily_last_day_id + 1
+	var target_unix: int = target_day * 86400 - bias_sec + Balance.DAILY_BOUNDARY_HOUR * 3600
+	return maxi(0, target_unix - now)
 
 # Живые числа для слота дня d (пересчитываются от текущего прогресса)
 func daily_reward_preview(d: int) -> Dictionary:
@@ -474,10 +512,12 @@ func do_prestige() -> int:
 	punk_active = false
 	punk_time_left = 0.0
 	boss_pending_fail = false
+	reset_combo(true)
 	Economy.gold = prestige_start_gold()
 	Economy.gold_changed.emit(Economy.gold)
 	punk_charge_changed.emit(0.0)
 	punk_state_changed.emit(false, 0.0)
+	combo_changed.emit(0, 1.0, false)
 	_spawn_enemy()
 	stage_changed.emit(stage, location())
 	stats_changed.emit()
@@ -496,8 +536,8 @@ func _spawn_enemy() -> void:
 	is_boss = (stage % Balance.BOSS_EVERY == 0)
 	var base_hp: float = Balance.ENEMY_HP_BASE * pow(Balance.ENEMY_HP_GROWTH, stage - 1)
 	var bhm: float = Balance.BOSS_HP_MULT
-	if is_boss and stage % Balance.STAGES_PER_LOCATION == 0:
-		bhm *= Balance.LOCATION_BOSS_HP_MULT   # финал локации — «ворота»
+	if is_boss and stage % Balance.LOCATION_BOSS_EVERY == 0:
+		bhm *= Balance.LOCATION_BOSS_HP_MULT   # ворота сложности (не каждый арт-слот)
 	enemy_max_hp = base_hp * (bhm if is_boss else 1.0)
 	enemy_hp = enemy_max_hp
 	boss_time_left = Balance.BOSS_TIMER_SEC if is_boss else 0.0
@@ -570,7 +610,7 @@ func _award_boss_bells() -> void:
 	bells_earned_total = float(target)
 	var drip: int = int(floor(float(gain) * Balance.BELLS_DRIP_SHARE))
 	bells_pending += float(gain - drip)
-	if (stage - 1) % Balance.STAGES_PER_LOCATION == 0:   # убит финальный босс локации
+	if (stage - 1) % Balance.LOCATION_BOSS_EVERY == 0:   # убит ворот-босс (после advance)
 		drip = int(drip * Balance.LOCATION_BOSS_BELLS_MULT)
 	if drip > 0:
 		Economy.add_bells(drip)
@@ -618,14 +658,19 @@ func _retreat_stage() -> void:
 
 # --- Действия игрока ---------------------------------------------------------
 func player_tap() -> Dictionary:
-	# Возвращает инфо для juice/UI: {"damage":x, "crit":bool}
+	# Возвращает инфо для juice/UI: {"damage":x, "crit":bool, "combo_hits":n, "combo_mult":m, "combo_tier_up":bool}
 	_add_punk_charge()                 # заряд панк-рока копится от тапов игрока
-	var dmg: float = tap_damage() * punk_dmg_mult() * boss_ad_mult()
+	var cinfo: Dictionary = _register_combo_hit()
+	var dmg: float = tap_damage() * punk_dmg_mult() * boss_ad_mult() * float(cinfo.mult)
 	var crit: bool = randf() < Balance.CRIT_CHANCE
 	if crit:
 		dmg *= Balance.CRIT_MULT
 	_hit_enemy(dmg)
-	return {"damage": dmg, "crit": crit}
+	return {
+		"damage": dmg, "crit": crit,
+		"combo_hits": int(cinfo.hits), "combo_mult": float(cinfo.mult),
+		"combo_tier_up": bool(cinfo.tier_up),
+	}
 
 func buy_tap_upgrade() -> bool:
 	if Economy.spend_gold(tap_upgrade_cost()):
@@ -662,6 +707,12 @@ func _process(delta: float) -> void:
 			punk_active = false
 			punk_time_left = 0.0
 			punk_state_changed.emit(false, 0.0)
+
+	# Комбо: сброс при паузе в тапах
+	if combo_hits > 0:
+		combo_timer -= delta
+		if combo_timer <= 0.0:
+			reset_combo()
 
 	# Дискретные атаки: каждый герой бьёт в свой ритм (чанк урона + сигнал)
 	var sp: float = punk_speed_mult()   # в раже атакуют чаще
@@ -819,8 +870,13 @@ func setup_store_shot(opts: Dictionary) -> void:
 	daily_day = int(opts.get("daily_day", 3))
 	daily_claims = int(opts.get("daily_claims", 2))
 	var now: int = int(Time.get_unix_time_from_system())
-	daily_last_day_id = int(opts.get("daily_last_day_id", _local_day_id(now) - 1))
-	daily_last_unix = int(opts.get("daily_last_unix", 0))
+	if opts.has("daily_ready"):
+		# false → «уже забрали сегодня» (таймер); true → можно забрать
+		daily_last_day_id = _local_day_id(now) - (1 if bool(opts.daily_ready) else 0)
+		daily_last_unix = 0 if bool(opts.daily_ready) else now
+	else:
+		daily_last_day_id = int(opts.get("daily_last_day_id", _local_day_id(now) - 1))
+		daily_last_unix = int(opts.get("daily_last_unix", 0))
 	punk_charge = float(opts.get("punk_charge", 0.0))
 	_spawn_enemy()
 	if opts.has("enemy_hp_ratio"):
@@ -860,6 +916,7 @@ func reset_progress() -> void:
 	punk_charge = 0.0
 	punk_active = false
 	punk_time_left = 0.0
+	reset_combo(true)
 	last_offline_income = 0.0
 	for id in Balance.PRESTIGE_ORDER:
 		meta_levels[id] = 0

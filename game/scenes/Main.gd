@@ -1,9 +1,6 @@
 # =============================================================================
 #  Main.gd — ЛОГИКА «Балагана». Сцена (Main.tscn) редактируется в Godot.
-#  Концепция «Сцена труппы»: арена с врагом (расставляется в редакторе) +
-#  РЕЛЬС крупных карточек-героев (собираешь группу) + тонкая панель действий.
-#  Скрипт: стиль + арт + наполнение карточек/панели + логика. Позиции нод
-#  (Arena/Enemy/TroupeRail/ActionBar) задаются в редакторе — скрипт их не двигает.
+#  Каркас UI — арена + панк + лист Труппы (гориз. рельс) + таб-бар.
 # =============================================================================
 extends Control
 
@@ -26,16 +23,54 @@ const F_TITLE := 34
 const F_NUM := 32
 const F_RES := 30        # единый размер верхних ресурсов
 const F_BOSS := 42       # крупный текст босса
-const PORTRAIT_H := 150  # фикс. высота портрета героя
-const APP_VERSION := "1.0.3"               # футер настроек; синхронно с version/name в export_presets
-const APP_VERSION_CODE := 103            # синхронно с version/code; для проверки обновления
+const PORTRAIT_H := 150  # портрет в рельсе Труппы (и модалка)
+const CARD_W := 166.0    # ширина карточки = кнопка xN
+const APP_VERSION := "1.0.4"               # футер настроек; синхронно с version/name в export_presets
+const APP_VERSION_CODE := 104            # синхронно с version/code; для проверки обновления
 const STORE_URL := "https://www.rustore.ru/catalog/app/com.punkfairytale.balagan"
+const REVIEW_WITCH_PATH := "res://art/ui/review_witch.png"  # спец-арт; иначе troupe witch
+const REVIEW_COOLDOWN_SEC := 5 * 24 * 3600                   # повтор через 5 дней
+const REVIEW_ARM_DELAY := 1.8
+const REVIEW_BOSS_NEED := 3                                 # 3-й босс (жизнь / сессия для повтора)
 const VERSION_URL := "https://lordkiselton.github.io/Punk-Clicker/version.json"
-const DEV_TOOLS := false                 # true → показать тест-зону в настройках (прокачка/лог)
+const DEV_TOOLS := true                  # true → тест-зона в настройках (прокачка / лог / fresh start)
 const DOCK_STUB_ENABLED := false         # Заказы/Коллекция/Сундук — скрыто до фикса позиции (наезжают на UI)
+const UI_TEXTURE_PREVIEW := true         # BloodLines: кнопки модалок; панели/слоты — flat + purple
+const UI_TEX_BTN_PRI := "res://art/ui/btn_primary.png"
+const UI_TEX_BTN_PRI_P := "res://art/ui/btn_primary_pressed.png"
+const UI_TEX_BTN_SEC := "res://art/ui/btn_secondary.png"
+const UI_TEX_CLOSE := "res://art/ui/btn_close.png"             # Icons-10 red ✕
+const UI_TEX_CHECK := "res://art/ui/btn_check.png"             # Icons-9 green ✓
+const UI_TEX_GEAR := "res://art/ui/btn_gear.png"               # Icons_settins_frame (purple bake)
+const UI_PURPLE := Color("#9b64d4")       # обводка модалок / «сегодня»
+const UI_BTN_SLICE := 44
+const UI_CLOSE_SIZE := 48.0
+const UI_CHECK_SIZE := 34.0              # меньше крестика, но заметна на слоте
+const UI_GEAR_SIZE := 48.0
+const UI_MODAL_PAD := 22                 # content margin flat-подложки
+const UI_DAILY_MODAL_W := 560.0          # не на всю ширину
+const UI_DAILY_CONTENT_W := 516.0        # MODAL_W − 2×PAD — ряд дней и гранд-финал
+const UI_DAILY_BTN_W := 460.0
+const UI_DAILY_BTN_H := 60.0
+const UI_DAILY_GAP := 12
+const UI_DAILY_SLOT_W := 164.0           # (CONTENT_W − 2×GAP) / 3
+const UI_DAILY_SLOT_H := 152.0
+const UI_DAILY_SLOT_WIDE_H := 120.0
+const UI_DAILY_ICON := 64.0
+const UI_DAILY_ICON_WIDE := 56.0         # гранд-финал: место под текст
+const UI_DAILY_VB_GAP := 12
+# CanvasLayer z: барки ниже всех блокирующих модалок
+const UI_Z_TUT := 40
+const UI_Z_BARK := 45
+const UI_Z_PUNK := 50
+const UI_Z_MODAL := 70
+const UI_Z_TOAST := 85
+const UI_Z_FADE := 95
+const UI_Z_LOAD := 100
 const F_BODY := 26
 const F_SUB := 22
 const F_SMALL := 18
+const BUY_ROLL_DUR := 0.15              # переключение x1/x10/x100/MAX — одометр за это время
 const F_DMG := 40
 const F_CRIT := 56
 const F_PASSIVE := 28
@@ -56,19 +91,43 @@ const ALLY_COLORS := {
 }
 const MULTS := [1, 10, 100, -1]
 
-# Локации (порядок прохождения) + их фоны
-const LOCATIONS := ["Проклятый Лес", "Погост", "Кривой Трактир", "Каменный Город", "Замок Короля"]
-const LOC_BG_PATHS := ["res://art/bg/forest.png", "res://art/bg/graveyard.png", "res://art/bg/tavern.png", "res://art/bg/city.png", "res://art/bg/castle.png"]
+# Локации (порядок прохождения) + фоны. SPL=25 — только смена арта; ворота HP — LOCATION_BOSS_EVERY=50.
+const LOCATIONS := [
+	"Проклятый Лес", "Подъезд", "Погост", "Двор Района", "Кривой Трактир",
+	"У Дома 24/7", "Каменный Город", "Интернет-Кафе", "Клуб «Фанера»", "Замок Короля",
+]
+const LOC_SHORT := ["Лес", "Подъезд", "Погост", "Двор", "Трактир", "24/7", "Город", "Неткафе", "Фанера", "Замок"]
+const LOC_BG_PATHS := [
+	"res://art/bg/forest.png", "res://art/bg/podjezd.png", "res://art/bg/graveyard.png",
+	"res://art/bg/schoolyard.png", "res://art/bg/tavern.png", "res://art/bg/shop24.png",
+	"res://art/bg/city.png", "res://art/bg/netcafe.png", "res://art/bg/nightclub.png",
+	"res://art/bg/castle.png",
+]
+# Архив v1 — только у старой пятёрки; "" = нет архива (РФ).
+const LOC_BG_V1_PATHS := [
+	"res://art/bg/v1/forest.png", "", "res://art/bg/v1/graveyard.png", "",
+	"res://art/bg/v1/tavern.png", "", "res://art/bg/v1/city.png", "", "", "res://art/bg/v1/castle.png",
+]
+const LOC_BG_V2_PATHS := [
+	"res://art/bg/v2/forest_v2.png", "res://art/bg/podjezd.png", "res://art/bg/v2/graveyard_v2.png",
+	"res://art/bg/schoolyard.png", "res://art/bg/v2/tavern_v2.png", "res://art/bg/shop24.png",
+	"res://art/bg/v2/city_v2.png", "res://art/bg/netcafe.png", "res://art/bg/nightclub.png",
+	"res://art/bg/v2/castle_v2.png",
+]
 const BG_TEX_PATH := "res://art/bg/forest.png"   # фолбэк
 
-# Враги по локациям: первые 3 — ключевые (дом), далее 2 «гостя» из соседних.
-# Мягкий стаггер: ключевые с начала, гости подключаются быстро. Босс — всегда ключевой.
+# Враги: первые 3 = дом (босс из них); дальше гости / 4-й житель. Стаггер 3→pool.size().
 const LOCATION_ENEMIES := [
-	["werewolf", "faerie", "shroom", "troll", "zombie"],         # Лес
-	["zombie", "skeleton", "emoghost", "werewolf", "banshee"],   # Погост
-	["orkgang", "orkskinhead", "troll", "ratgangster", "dwarf"], # Трактир
-	["ratgangster", "orkrapper", "banshee", "orkskinhead", "vampire"], # Город
-	["vampire", "techno", "dwarf", "skeleton", "emoghost"],      # Замок
+	["werewolf", "faerie", "shroom", "zombie", "satyr_rocker"],                          # Лес
+	["domovoi", "polter_neighbor", "garage_golem", "upyr_collector", "emoghost", "imp_petard"], # Подъезд
+	["zombie", "skeleton", "emoghost", "werewolf", "polter_neighbor"],                   # Погост
+	["kobold_pickpocket", "imp_petard", "centaur_courier", "orkgang", "shroom"],         # Двор
+	["orkgang", "orkskinhead", "troll", "satyr_rocker", "gnoll_baryga"],                 # Трактир
+	["succubus_cashier", "wurdulak", "elf_chelnok", "gnoll_baryga", "kobold_pickpocket", "centaur_courier"], # 24/7
+	["ratgangster", "orkrapper", "harpy_conductor", "basilisk_gai", "banshee", "elf_chelnok"], # Город
+	["banshee", "elf_raver", "chort_scooter", "techno", "medusa_makeup"],                # Неткафе
+	["chort_croupier", "medusa_makeup", "satyr_rocker", "elf_raver", "banshee"],         # Фанера
+	["vampire", "techno", "dwarf", "chort_croupier", "medusa_makeup"],                   # Замок
 ]
 const ENEMY_NAMES := {
 	"zombie": "Зомби", "werewolf": "Вервольф", "faerie": "Фея", "shroom": "Гриб-Байкер",
@@ -76,14 +135,45 @@ const ENEMY_NAMES := {
 	"orkgang": "Орк-Гопник", "orkskinhead": "Орк-Скинхед", "troll": "Тролль-Кузнец",
 	"ratgangster": "Крыса-Гангстер", "orkrapper": "Орк-Рэпер", "banshee": "Банши-Стримерша",
 	"vampire": "Вампир-Цирюльник", "techno": "Техно-Некромант", "dwarf": "Гном-Кузнец",
+	# волна 2
+	"centaur_courier": "Кентавр-Курьер", "domovoi": "Домовой-Алкососед",
+	"garage_golem": "Гаражный Голем", "imp_petard": "Имп-Петардник",
+	"wurdulak": "Вурдалак-Шаурмач", "gnoll_baryga": "Гнолл-Барыга",
+	"elf_raver": "Эльф-Рейвер", "kobold_pickpocket": "Кобольд-Карманник",
+	"chort_croupier": "Чёрт-Крупье", "medusa_makeup": "Медуза-Визажистка",
+	# волна 3
+	"elf_chelnok": "Эльф-Челно́к", "harpy_conductor": "Гарпия-Кондукторша",
+	"satyr_rocker": "Сатир-Рокер", "succubus_cashier": "Суккуб-Кассирша",
+	"upyr_collector": "Упырь-Коллектор", "basilisk_gai": "Василиск-ГАИшник",
+	"polter_neighbor": "Полтергейст-Сосед", "chort_scooter": "Чёрт-Самокат",
 }
+const ENEMY_EXTRA_IDS := [
+	"centaur_courier", "domovoi", "garage_golem", "imp_petard", "wurdulak",
+	"gnoll_baryga", "elf_raver", "kobold_pickpocket", "chort_croupier", "medusa_makeup",
+	"elf_chelnok", "harpy_conductor", "satyr_rocker", "succubus_cashier",
+	"upyr_collector", "basilisk_gai", "polter_neighbor", "chort_scooter",
+]
 const ENEMY_TEX_DIR := "res://art/enemies/"
-const ALLY_TEX_PATHS := {
+const ALLY_TEX_V1_PATHS := {
 	"knight": "res://art/troupe/knight.png", "ratrogue": "res://art/troupe/ratrogue.png",
 	"bard": "res://art/troupe/bard.png", "blacksmith": "res://art/troupe/blacksmith.png",
 	"alchemist": "res://art/troupe/alchemist.png", "hunter": "res://art/troupe/hunter.png",
 	"witch": "res://art/troupe/witch.png", "jester": "res://art/troupe/jester.png",
 	"berserker": "res://art/troupe/berserker.png", "necromancer": "res://art/troupe/necromancer.png",
+}
+const ALLY_TEX_V2_PATHS := {
+	"knight": "res://art/troupe/v2/knight.png", "ratrogue": "res://art/troupe/v2/ratrogue.png",
+	"bard": "res://art/troupe/v2/bard.png", "blacksmith": "res://art/troupe/v2/blacksmith.png",
+	"alchemist": "res://art/troupe/v2/alchemist.png", "hunter": "res://art/troupe/v2/hunter.png",
+	"witch": "res://art/troupe/v2/witch.png", "jester": "res://art/troupe/v2/jester.png",
+	"berserker": "res://art/troupe/v2/berserker.png", "necromancer": "res://art/troupe/v2/necromancer.png",
+}
+const ALLY_TEX_V3_PATHS := {
+	"knight": "res://art/troupe/v3/knight.png", "ratrogue": "res://art/troupe/v3/ratrogue.png",
+	"bard": "res://art/troupe/v3/bard.png", "blacksmith": "res://art/troupe/v3/blacksmith.png",
+	"alchemist": "res://art/troupe/v3/alchemist.png", "hunter": "res://art/troupe/v3/hunter.png",
+	"witch": "res://art/troupe/v3/witch.png", "jester": "res://art/troupe/v3/jester.png",
+	"berserker": "res://art/troupe/v3/berserker.png", "necromancer": "res://art/troupe/v3/necromancer.png",
 }
 # Закрытые карточки «Скоро» — тизер следующего ростера (пусто)
 const LOCKED_HEROES := []
@@ -109,18 +199,27 @@ const FONT_HEADER := "res://fonts/RuslanDisplay.ttf"
 @onready var _boss_label: Label = %BossLabel
 @onready var _boss_bar: ProgressBar = %BossBar
 @onready var _cards: HBoxContainer = %Cards
-@onready var _action_bar: VBoxContainer = %ActionBar
+@onready var _tab_bar: HBoxContainer = %TabBar
+@onready var _mult_row: HBoxContainer = %MultRow
 @onready var _reward_btn: Button = %RewardBtn
 
 var _bg_tex: Texture2D = null
+var _ui_tex_btn_pri: Texture2D = null
+var _ui_tex_btn_pri_p: Texture2D = null
+var _ui_tex_btn_sec: Texture2D = null
+var _ui_tex_close: Texture2D = null
+var _ui_tex_check: Texture2D = null
+var _ui_tex_gear: Texture2D = null
 var _enemy_textures: Dictionary = {}
 var _loc_bg: Dictionary = {}            # индекс локации -> фон
 var _current_enemy: String = ""         # id текущего врага (выбран при спавне)
+var _enemy_preview_id: String = ""      # дев-превью врага (пусто = по пулу локации)
 var _ally_tex: Dictionary = {}
 var _buy_mult: int = 1
 var _passive_timer: float = 0.0
 var _card_widgets: Dictionary = {}     # aid -> {frame, portrait, name, cost}
 var _mult_btns: Dictionary = {}
+var _tab_btns: Dictionary = {}          # id -> Button
 var _tap_btn: Button = null
 var _klinok_w: Dictionary = {}          # карточка «Клинок» (прокачка тапа)
 var _flash_tw: Tween = null
@@ -159,8 +258,27 @@ var _gear_btn: Button = null
 var _settings_layer: CanvasLayer = null
 var _settings_panel: Control = null
 var _settings_box: Control = null
+var _loc_preview: int = -1              # -1 = живая локация; ≥0 = дев-превью фона
+var _loc_bg_v1: Dictionary = {}         # индекс -> фон v1
+var _loc_bg_v2: Dictionary = {}         # индекс -> фон v2 (кандидат / совпадает с боевым)
+var _bg_preview_tex: Texture2D = null   # явный задник из дев-меню (v1/v2)
+var _loc_dev_root: Control = null
+var _loc_dev_opt: OptionButton = null
+var _loc_dev_port_opt: OptionButton = null
+var _loc_dev_enemy_opt: OptionButton = null
+var _ally_tex_v1: Dictionary = {}
+var _ally_tex_v2: Dictionary = {}
+var _ally_tex_v3: Dictionary = {}
+var _portrait_pack: int = 3             # 1 = v1, 2 = v2, 3 = v3 рельс (live)
+var _rail_drag := false
+var _rail_drag_origin_x := 0.0
+var _rail_drag_origin_scroll := 0
+var _rail_drag_moved := false
+var _zxc_held: bool = false
 var _reset_armed: bool = false
 var _reset_btn: Button = null
+var _fresh_armed: bool = false
+var _fresh_btn: Button = null
 
 # --- Босс: телеграф / победа / поражение -------------------------------------
 var _boss_layer: CanvasLayer = null
@@ -178,6 +296,9 @@ var _bark_tw: Tween = null
 const BARK_DWELL := 4.1          # было 3.8 + 0.3 с
 const BARK_SLIDE_IN := 0.16
 const BARK_SLIDE_OUT := 0.20
+const BARK_GAP := 14.0           # низ барка → верх DockPlate (не PunkSlot — иначе визуально «вплавлено»)
+const BARK_STRIP_H := 150.0      # полоса над плашкой (хватает на 2 строки + портрет)
+const BARK_PORT := 78.0          # диаметр/сторона портрета в барке
 var _bark_t: float = 0.0
 var _bark_next: float = 8.0
 var _bark_last_hero: String = ""
@@ -185,6 +306,21 @@ var _bark_recent: Array = []
 var _bark_seen: Dictionary = {}
 var _bark_seen_init: bool = false
 var _bark_intro_q: Array = []
+
+# --- Комбо HUD (лево, над полосой барков) — раскладка A -------------------
+var _combo_layer: CanvasLayer = null
+var _combo_root: Control = null
+var _combo_title_lbl: Label = null      # «КОМБО!»
+var _combo_hits_lbl: Label = null       # счётчик тапов
+var _combo_mult_lbl: Label = null       # «УРОН ×1.4»
+var _combo_tw: Tween = null
+var _combo_shown: bool = false
+const COMBO_HUD_H := 102.0              # 3 строки, компактнее бывших «огромных» хитов
+const COMBO_HUD_W := 200.0
+const COMBO_GAP_ABOVE_BARK := 8.0
+const COMBO_F_TITLE := 20               # крик
+const COMBO_F_HITS := 40                # было 52 — чуть тише, место под 3 строки
+const COMBO_F_MULT := 20                # «УРОН ×N»
 var _boss_prev_is_boss: bool = false
 var _boss_offer: Control = null
 var _boss_offer_box: Control = null
@@ -205,11 +341,18 @@ var _prestige_intro_seen: bool = false
 var _prestige_box: Control = null      # плашка окна (для «поп»-анимации)
 var _prestige_step1: Control = null    # шаг 1 — описание + сколько черепов
 var _prestige_step2: Control = null    # шаг 2 — распределение черепов
-var _prestige_s1_count: Label = null   # счётчик черепов на шаге 1
+var _prestige_s1_count: Label = null   # «У тебя N» — общий счётчик шапки
+var _prestige_s1_word: Label = null    # Череп / Черепа / Черепов
+var _bells_roll_tw: Tween = null       # одометр шапки при трате черепов
+var _prestige_gain_row: Control = null # строка «получишь ещё: N [icon] …»
+var _prestige_gain_n: Label = null
+var _prestige_gain_word: Label = null
 var _prestige_step1_go: Button = null  # кнопка «Новая сказка» на шаге 1
 var _prestige_leftover: Control = null # диалог «остались черепа?»
 var _prestige_leftover_box: Control = null
-var _prestige_leftover_lbl: Label = null
+var _prestige_leftover_n: Label = null
+var _prestige_leftover_word: Label = null
+var _prestige_leftover_verb: Label = null
 var _prestige_s2_icon: TextureRect = null   # иконка черепа на шаге 2 (цель полёта при покупке)
 var _prestige_step1_close: Button = null
 var _prestige_lock: int = 0             # первый показ Сказки: отсчёт блокировки кнопок
@@ -220,12 +363,34 @@ var _daily_panel: Control = null
 var _daily_box: Control = null
 var _daily_slots: Dictionary = {}       # day -> {frame, val, day_lbl}
 var _daily_claim_btn: Button = null
-var _daily_next_lbl: Label = null       # «Приходи завтра…», когда награда забрана
-var _daily_btn: Button = null           # кнопка «ДЕНЬ N» в топбаре
+var _daily_next_lbl: Label = null       # «Приходи завтра…» — всегда в футере (без скачка высоты)
+var _daily_flavor: Label = null
+var _daily_btn: Button = null           # legacy (скрыт); вход — сайдбар Афиши
 var _daily_btn_tw: Tween = null
+var _daily_claiming: bool = false       # блок повторного тапа на время полёта лута
 var _daily_intro_seen: bool = false     # первое знакомство (после первого босса)
 var _daily_shown_session: bool = false  # автопоказ — раз за сессию
 var _daily_check_t: float = 0.0
+
+# --- Сайдбары арены (под HP): слева Афиша, справа Клад + ×2 -------------------
+const SIDE_EDGE := 8.0
+const SIDE_W := 130.0                   # было 86 ×1.5
+const SIDE_PORT := 96.0                 # было 64 ×1.5 — читаемость на телефоне
+const SIDE_TOP := 78.0                  # под HpBar (16…70)
+const SIDE_GAP := 14.0
+const SIDE_BORDER := 4
+const SIDE_TITLE_F := 24
+const SIDE_FOOT_F := 20
+const SIDE_TIMER := Color("#e8dff2")     # таймер ожидания — ярче MUTED, читается на BG
+var _side_left: VBoxContainer = null
+var _side_right: VBoxContainer = null
+var _side_afisha: Dictionary = {}       # root/title/btn/icon/ph/foot/shown
+var _side_klad: Dictionary = {}
+var _side_x2: Dictionary = {}
+var _klad_nudge_t: float = 0.0
+const KLAD_NUDGE_GAP := 36.0            # редкий акцент поверх мягкого idle-пульса
+const KLAD_REHINT_SEC := 180.0          # мягкий повтор тоста раз за сессию (~3 мин)
+var _afisha_tick_t: float = 0.0
 
 # --- Разрешения / приветствие Шута ---------------------------------------------
 var _welcome_seen: bool = false         # первое знакомство (софт-аск микрофона) показано
@@ -233,6 +398,7 @@ var _push_asks: int = 0                 # сколько раз софт-аск�
 var _char_layer: CanvasLayer = null     # диалог с портретом персонажа
 var _listen_perm_btn: Button = null     # «Разрешить крик» в оверлее прослушки
 var _offline_amt: float = 0.0           # оффлайн-доход, ждущий забора (для ×2)
+var _offline_layer: CanvasLayer = null
 var _offline_root: Control = null
 var _offline_panel: Control = null
 
@@ -241,6 +407,10 @@ var _nudge_tw: Tween = null             # пульс кнопки под нуд�
 var _last_fail_stage: int = -1          # для нуджа: стадия последнего провала босса
 var _fail_count: int = 0                # сколько раз подряд провалили этого босса
 var _first_boss_reported: bool = false  # аналитика: первый босс — один раз за сессию
+var _boss_wins: int = 0                 # побед над боссом за жизнь (гейты афиши/клада)
+var _tut_bubble_locked: bool = false    # не дёргать пузырь за пульсирующей целью (ХОЙ)
+var _tut_bubble_pos: Vector2 = Vector2.ZERO
+var _tut_bubble_size: Vector2 = Vector2.ZERO
 
 # --- Иконки ресурсов ---------------------------------------------------------
 var _gold_tex: Texture2D = null
@@ -253,11 +423,24 @@ var _pips_prev_done: int = 0           # для анимации нового п
 
 # --- Туториал первой сессии --------------------------------------------------
 var _tut_done: bool = false
-var _review_asked: bool = false         # промпт «оцените» показан (разово)
+var _review_asked: bool = false         # = review_done (ушёл в стор)
+var _review_done: bool = false
+var _review_attempts: int = 0           # показов (макс 2)
+var _review_later_unix: int = 0         # unix «Позже»
+var _session_boss_wins: int = 0         # побед босса в этой сессии
+var _review_layer: CanvasLayer = null
+var _review_panel: Control = null
+var _review_box: Control = null
 var _klad_hint_seen: bool = false       # онбординг кнопки «Клад» показан (разово)
+var _klad_watched_session: bool = false # в этой сессии досмотрели double_gold
+var _klad_session_rehint_done: bool = false  # мягкий повтор тоста уже был
+var _klad_rehint_armed: bool = false    # таймер повтора уже заведён
 var _update_nudged: bool = false        # нудж обновления показан в этой сессии
 var _update_http: HTTPRequest = null
 var _toast_layer: CanvasLayer = null
+var _tab_soon: Control = null
+var _tab_soon_layer: CanvasLayer = null
+var _tab_soon_src: Control = null
 var _tut_step: int = -1                 # -1 неактивен; 0..3 шаги
 var _tut_layer: CanvasLayer = null
 var _tut_rect: ColorRect = null         # затемнение + прожектор (шейдер)
@@ -268,6 +451,7 @@ var _tut_text: Label = null
 var _tut_taps: int = 0                  # счётчик тапов для шага 1
 var _tut_pulse_t: float = 0.0
 var _tut_shown: bool = false            # коачмарк сейчас показан (precond выполнен)
+var _tut_anim_tw: Tween = null          # pop open/close как у модалок
 
 # --- ПОЛНЫЙ ПАНК-РОК (UI + VFX + микрофон) ----------------------------------
 const PUNK_LISTEN_SEC := 3.0          # окно прослушки крика «ХОЙ»
@@ -278,7 +462,7 @@ const PUNK_MIC_SUSTAIN := 0.10        # крик должен держаться
 var _punk_btn: Button = null
 var _punk_fill: ColorRect = null
 var _punk_shine: ColorRect = null       # блик-свип, когда заряд полон
-var _punk_total: float = 15.0           # фактическая длительность текущего панк-рока (для шкалы/таймера)
+var _punk_total: float = 10.0           # фактическая длительность текущего панк-рока (для шкалы/таймера)
 var _punk_shine_t: float = 0.0
 var _punk_label: Label = null
 var _punk_layer: CanvasLayer = null
@@ -317,6 +501,7 @@ func _ready() -> void:
 		_build_loading()   # лоадскрин поверх всего — прячет старт/устаканивание сцены
 	_load_settings()
 	_load_textures()
+	_fit_debug_window_m52()
 	_apply_fonts()
 	_apply_styles()
 	if _bg_tex: _bgrect.texture = _bg_tex
@@ -324,21 +509,32 @@ func _ready() -> void:
 	_update_enemy_visual()
 
 	_tap_zone.pressed.connect(_on_tap)
-	_reward_btn.pressed.connect(_on_reward_pressed)
+	# Клад: сигнал вешается в _build_sidebars на сайдбар-слот (сцена RewardBtn скрыта)
 	_enemy.resized.connect(_update_enemy_pivot)
 	_build_hpbar()
 	_build_cards()
 	_build_action()
+	_build_tabs()
+	var rail := get_node_or_null("%TroupeRail") as ScrollContainer
+	if rail:
+		rail.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+		rail.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		rail.add_theme_stylebox_override("panel", _empty())
 	_build_punk()
+	_style_dock_plate()
 	_setup_mic()
 	_setup_music()
 	_build_settings()
 	_apply_settings()
+	_build_loc_dev()
 	_build_boss_ui()
 	_build_barks()
+	_build_combo_hud()
 	if DOCK_STUB_ENABLED:
 		_build_dock_stub()
 	_build_prestige()
+	_build_sidebars()
+	_ensure_afisha_pause_clock()
 	_build_tutorial()
 
 	Economy.gold_changed.connect(func(_v): _refresh())
@@ -356,6 +552,7 @@ func _ready() -> void:
 	Game.hero_attacked.connect(_on_hero_attacked)
 	Game.punk_charge_changed.connect(_on_punk_charge)
 	Game.punk_state_changed.connect(_on_punk_state)
+	Game.combo_changed.connect(_on_combo_changed)
 	Monetization.rewarded_completed.connect(_on_rewarded)
 	Monetization.rewarded_failed.connect(_on_reward_failed)
 
@@ -380,14 +577,32 @@ func _ready() -> void:
 # Двигаем ВЕСЬ верхний блок вниз и ВЕСЬ нижний блок вверх на одну величину.
 # Идемпотентно (всегда от базовых offset'ов) + пере-применяется при ресайзе окна.
 const UI_MARGIN := 72.0     # желаемый отступ от краёв (дизайн-пиксели)
+const UI_CHROME := 18.0     # боковой/стыковочный отступ нижнего блока
 const TOP_BASE := 36.0      # где топбар стоит в макете (offset_top)
 const BOT_BASE := 64.0      # где нижний ряд стоит в макете (|offset_bottom| мультов)
+const PUNK_TOP := -580.0    # база PunkSlot.offset_top (лист выше, чтобы влез рельс)
+const PUNK_BOT := -516.0
+const SHEET_TOP := -508.0
+const SHEET_BOT := -164.0
+const TAB_TOP := -156.0
+const TAB_BOT := -64.0
+const DOCK_TOP := PUNK_TOP - UI_CHROME  # подложка: стандартный зазор над панком
+
+func _fit_sheet_width() -> void:
+	_sync_buy_widths()
+
 
 func _sa_set(nm: String, t: float, b: float) -> void:
 	var n := get_node_or_null("%" + nm) as Control
 	if n:
 		n.offset_top = t
 		n.offset_bottom = b
+
+
+func _top_h_inset() -> float:
+	## Боковой inset топбара = внешний край кругов Афиши/Клада (Arena + SIDE_EDGE + центрирование порта).
+	return UI_CHROME + SIDE_EDGE + (SIDE_W - SIDE_PORT) * 0.5
+
 
 func _apply_safe_area() -> void:
 	# реальные инсеты выреза/баров (дизайн-пиксели)
@@ -406,13 +621,22 @@ func _apply_safe_area() -> void:
 	# База offset'ов зафиксирована из Main.tscn (детерминированно, без кэша)
 	_sa_set("TopBar", 36.0 + td, 130.0 + td)
 	_sa_set("Title", 138.0 + td, 252.0 + td)
-	_sa_set("Arena", 256.0 + td, -516.0 - bd)     # верх вниз, низ вверх
-	_sa_set("PunkSlot", -500.0 - bd, -436.0 - bd)
-	_sa_set("TroupeRail", -428.0 - bd, -132.0 - bd)
-	_sa_set("ActionBar", -120.0 - bd, -64.0 - bd)
+	_sa_set("Arena", 256.0 + td, DOCK_TOP - bd)
+	_sa_set("DockPlate", DOCK_TOP - bd, 0.0)
+	_sa_set("PunkSlot", PUNK_TOP - bd, PUNK_BOT - bd)
+	_sa_set("TroupeSheet", SHEET_TOP - bd, SHEET_BOT - bd)
+	_sa_set("TabBar", TAB_TOP - bd, TAB_BOT - bd)
+	# валюты + шестерёнка — в одну вертикаль с кругами сайдбаров
+	var hi: float = _top_h_inset()
+	var tb := get_node_or_null("%TopBar") as Control
+	if tb:
+		tb.offset_left = hi
+		tb.offset_right = -hi
 	_apply_bark_layout(bd)
+	_apply_combo_layout(bd)
+	_fit_sheet_width.call_deferred()
 	var bg := get_node_or_null("%BgRect") as Control
-	if bg: bg.offset_bottom = -516.0 - bd
+	if bg: bg.offset_bottom = DOCK_TOP - bd
 
 
 # Лоадскрин: тёмный фон (как boot) → картинка появляется с фейдом → держим →
@@ -422,7 +646,7 @@ func _build_loading() -> void:
 		return
 	var tex: Texture2D = load("res://art/ui/loading.png")
 	var layer := CanvasLayer.new()
-	layer.layer = 100
+	layer.layer = UI_Z_LOAD
 	layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(layer)
 	var root := Control.new()
@@ -462,18 +686,165 @@ func _flat(bg: Color, border: Color, radius := 10, bw := 2, margin := 10) -> Sty
 func _empty() -> StyleBoxEmpty:
 	return StyleBoxEmpty.new()
 
+func _style_dock_plate() -> void:
+	var plate := get_node_or_null("%DockPlate") as Panel
+	if plate == null:
+		return
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color("#1c1524")
+	sb.border_color = SURF_BORDER
+	sb.border_width_top = 2
+	sb.set_corner_radius_all(0)
+	sb.set_content_margin_all(0)
+	plate.add_theme_stylebox_override("panel", sb)
+
 func _style_button(b: Button, bg: Color, border: Color, fg: Color) -> void:
 	# hover == normal: на тач-экране иначе подсветка «залипает» после нажатия
 	b.add_theme_stylebox_override("normal", _flat(bg, border))
 	b.add_theme_stylebox_override("hover", _flat(bg, border))
-	b.add_theme_stylebox_override("pressed", _flat(bg.darkened(0.15), border))
-	# недоступно — заметно темнее + приглушённый текст (высокий контраст)
-	b.add_theme_stylebox_override("disabled", _flat(bg.darkened(0.55), SURF_BORDER))
-	b.add_theme_color_override("font_disabled_color", Color("#6a5f76"))
+	b.add_theme_stylebox_override("pressed", _flat(bg.darkened(0.18), border.darkened(0.1)))
+	# disabled — явно «мёртвая», не путать с secondary
+	b.add_theme_stylebox_override("disabled", _flat(bg.darkened(0.62), SURF_BORDER.darkened(0.2)))
 	b.add_theme_color_override("font_color", fg)
-	b.add_theme_color_override("font_disabled_color", MUTED)
-	b.add_theme_color_override("font_pressed_color", fg)
+	b.add_theme_color_override("font_pressed_color", fg.darkened(0.08))
 	b.add_theme_color_override("font_hover_color", fg)
+	b.add_theme_color_override("font_disabled_color", Color(MUTED, 0.55))
+
+# HUD flat по роли: primary / secondary / ad / selected
+func _btn_hud(b: Button, role: String) -> void:
+	match role:
+		"selected":
+			_style_button(b, GOLD, WOOD_BORDER, DARK)
+		"ad":
+			_style_button(b, Color("#2a0f14"), BLOOD, Color("#ff5a4f"))
+		"secondary":
+			_style_button(b, SURF, SURF_BORDER, TXT)
+		_:
+			_style_button(b, WOOD, WOOD_BORDER, GOLD)
+
+func _ui_scaled_inset(tex_px: int, slice_px: int, control_px: float, pad := 6) -> int:
+	return int(ceil(float(slice_px) / float(tex_px) * control_px)) + pad
+
+func _ui_tex_box(tex: Texture2D, slice: Vector4i, content: Vector4i, tile_h := true, tile_v := true, modulate := Color.WHITE) -> StyleBoxTexture:
+	var s := StyleBoxTexture.new()
+	s.texture = tex
+	s.texture_margin_left = slice.x
+	s.texture_margin_top = slice.y
+	s.texture_margin_right = slice.z
+	s.texture_margin_bottom = slice.w
+	s.set_content_margin(Side.SIDE_LEFT, content.x)
+	s.set_content_margin(Side.SIDE_TOP, content.y)
+	s.set_content_margin(Side.SIDE_RIGHT, content.z)
+	s.set_content_margin(Side.SIDE_BOTTOM, content.w)
+	s.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE if tile_h else StyleBoxTexture.AXIS_STRETCH_MODE_STRETCH
+	s.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE if tile_v else StyleBoxTexture.AXIS_STRETCH_MODE_STRETCH
+	s.modulate_color = modulate
+	return s
+
+func _ui_modal_flat(pad := UI_MODAL_PAD) -> StyleBoxFlat:
+	return _flat(DARK, UI_PURPLE, 20, 2, pad)
+
+# Flat-слот Афиши: claimed / current / finale / future
+func _ui_daily_slot_flat(wide: bool, claimed: bool, current: bool, finale: bool) -> StyleBoxFlat:
+	var pad := 12 if wide else 10
+	var bg: Color = SURF
+	var bd: Color = SURF_BORDER
+	var bw := 2
+	if claimed:
+		bg = Color("#18141e")
+		bd = Color("#2e2738")
+	elif current:
+		bg = Color("#2a1f38")
+		bd = UI_PURPLE
+		bw = 3
+	elif finale:
+		bg = Color("#241c14")
+		bd = Color("#b8942f")
+		bw = 2
+	return _flat(bg, bd, 12, bw, pad)
+
+func _ui_make_close_x(on_close: Callable) -> Button:
+	# Icons-10 red ✕: центр кнопки на внешнем углу модалки
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(UI_CLOSE_SIZE, UI_CLOSE_SIZE)
+	b.mouse_filter = Control.MOUSE_FILTER_STOP
+	var empty := StyleBoxEmpty.new()
+	for st in ["normal", "hover", "pressed", "focus", "disabled"]:
+		b.add_theme_stylebox_override(st, empty)
+	if _ui_tex_close:
+		b.icon = _ui_tex_close
+		b.expand_icon = true
+		b.text = ""
+		b.add_theme_color_override("icon_normal_color", Color.WHITE)
+		b.add_theme_color_override("icon_pressed_color", Color(0.9, 0.75, 0.75))
+		b.add_theme_color_override("icon_hover_color", Color(1.12, 1.05, 1.05))
+		b.add_theme_color_override("icon_disabled_color", Color(0.5, 0.45, 0.45, 0.7))
+	else:
+		b.text = "✕"
+		b.add_theme_font_size_override("font_size", F_TITLE)
+		b.add_theme_color_override("font_color", BLOOD)
+		b.add_theme_color_override("font_pressed_color", BLOOD)
+		b.add_theme_color_override("font_hover_color", BLOOD)
+	b.pressed.connect(on_close)
+	return b
+
+func _ui_modal_title_bar(title_text: String, on_close: Callable) -> Dictionary:
+	# заголовок по центру + красный ✕ на центре верхнего правого угла рамки
+	var head := Control.new()
+	head.custom_minimum_size = Vector2(0, 56)
+	head.mouse_filter = Control.MOUSE_FILTER_PASS
+	head.clip_contents = false
+	var title := Label.new()
+	title.text = title_text
+	title.set_anchors_preset(Control.PRESET_FULL_RECT)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lab(title, F_TITLE, GOLD)
+	if _header_font:
+		title.add_theme_font_override("font", _header_font)
+	head.add_child(title)
+	var close := _ui_make_close_x(on_close)
+	head.add_child(close)
+	# margin flat-панели → внешний угол; центр ✕ на углу
+	var inset := float(UI_MODAL_PAD)
+	var half := UI_CLOSE_SIZE * 0.5
+	close.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	close.offset_left = inset - half
+	close.offset_top = -inset - half
+	close.offset_right = inset + half
+	close.offset_bottom = -inset + half
+	return {"root": head, "close": close, "title": title}
+
+func _style_button_texture(b: Button, preferred: bool) -> void:
+	# BloodLines CTA: preferred / secondary / pressed / disabled — явно разведены
+	var tex: Texture2D = _ui_tex_btn_pri if preferred else _ui_tex_btn_sec
+	if tex == null:
+		_btn_hud(b, "primary" if preferred else "secondary")
+		return
+	var tw := float(tex.get_width())
+	var th := float(tex.get_height())
+	var m := UI_BTN_SLICE
+	b.custom_minimum_size = Vector2(UI_DAILY_BTN_W, UI_DAILY_BTN_H)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var inset_l := _ui_scaled_inset(int(tw), m, UI_DAILY_BTN_W, 8)
+	var inset_t := _ui_scaled_inset(int(th), m, UI_DAILY_BTN_H, 6)
+	var slice := Vector4i(m, m, m, m)
+	var content := Vector4i(inset_l, inset_t, inset_l, inset_t)
+	var mod_n := Color.WHITE if preferred else Color(0.82, 0.80, 0.90, 1.0)
+	var normal := _ui_tex_box(tex, slice, content, false, false, mod_n)
+	var pressed_tex: Texture2D = _ui_tex_btn_pri_p if preferred and _ui_tex_btn_pri_p else tex
+	var pressed := _ui_tex_box(pressed_tex, slice, content, false, false, Color(0.72, 0.68, 0.82, 1.0))
+	var disabled := _ui_tex_box(tex, slice, content, false, false, Color(0.32, 0.30, 0.38, 0.85))
+	b.add_theme_stylebox_override("normal", normal)
+	b.add_theme_stylebox_override("hover", normal)
+	b.add_theme_stylebox_override("pressed", pressed)
+	b.add_theme_stylebox_override("disabled", disabled)
+	b.add_theme_color_override("font_color", GOLD if preferred else TXT)
+	b.add_theme_color_override("font_pressed_color", GOLD.darkened(0.12) if preferred else TXT.darkened(0.1))
+	b.add_theme_color_override("font_hover_color", GOLD if preferred else TXT)
+	b.add_theme_color_override("font_disabled_color", Color(MUTED, 0.5))
 
 func _lab(l: Label, fs: int, color: Color) -> void:
 	l.add_theme_font_size_override("font_size", fs)
@@ -536,7 +907,7 @@ func _apply_styles() -> void:
 		_tap_zone.add_theme_stylebox_override(s, _empty())
 	_reward_btn.add_theme_font_size_override("font_size", F_SUB)
 	_reward_btn.text = "▶ Клад"
-	_style_button(_reward_btn, WOOD, WOOD_BORDER, GOLD)
+	_btn_hud(_reward_btn, "primary")
 	_reward_btn.button_down.connect(_punch.bind(_reward_btn))
 
 
@@ -553,24 +924,119 @@ func _apply_fonts() -> void:
 				n.add_theme_font_override("font", _header_font)
 
 
+func _try_load_tex(path: String) -> Texture2D:
+	if ResourceLoader.exists(path):
+		var res: Resource = load(path)
+		if res is Texture2D:
+			return res as Texture2D
+	var candidates: PackedStringArray = []
+	var g: String = ProjectSettings.globalize_path(path)
+	if g != "":
+		candidates.append(g)
+	if path.begins_with("res://"):
+		var root: String = ProjectSettings.globalize_path("res://")
+		candidates.append(root.path_join(path.substr(6)))
+	for abs_path in candidates:
+		if abs_path == "" or not FileAccess.file_exists(abs_path):
+			continue
+		var img: Image = Image.load_from_file(abs_path)
+		if img != null and not img.is_empty():
+			return ImageTexture.create_from_image(img)
+	return null
+
+
 func _load_textures() -> void:
 	if ResourceLoader.exists(BG_TEX_PATH):
 		_bg_tex = load(BG_TEX_PATH)
 	for i in LOC_BG_PATHS.size():
-		if ResourceLoader.exists(LOC_BG_PATHS[i]):
-			_loc_bg[i] = load(LOC_BG_PATHS[i])
+		var live: Texture2D = _try_load_tex(LOC_BG_PATHS[i])
+		if live:
+			_loc_bg[i] = live
+		var v1_path: String = LOC_BG_V1_PATHS[i] if i < LOC_BG_V1_PATHS.size() else ""
+		if v1_path != "":
+			var v1: Texture2D = _try_load_tex(v1_path)
+			if v1:
+				_loc_bg_v1[i] = v1
+		# v2: сначала папка v2, иначе боевой root (часто уже = v2)
+		var v2: Texture2D = _try_load_tex(LOC_BG_V2_PATHS[i])
+		if v2 == null:
+			v2 = live
+		if v2:
+			_loc_bg_v2[i] = v2
 	for k in ENEMY_NAMES:
 		var p: String = ENEMY_TEX_DIR + k + ".png"
-		if ResourceLoader.exists(p):
+		var et: Texture2D = _try_load_tex(p)
+		if et:
+			_enemy_textures[k] = et
+		elif ResourceLoader.exists(p):
 			_enemy_textures[k] = load(p)
-	for aid in ALLY_TEX_PATHS:
-		if ResourceLoader.exists(ALLY_TEX_PATHS[aid]):
-			_ally_tex[aid] = load(ALLY_TEX_PATHS[aid])
+	for aid in ALLY_TEX_V1_PATHS:
+		var t1: Texture2D = _try_load_tex(ALLY_TEX_V1_PATHS[aid])
+		if t1:
+			_ally_tex_v1[aid] = t1
+		var t2: Texture2D = _try_load_tex(ALLY_TEX_V2_PATHS[aid])
+		if t2:
+			_ally_tex_v2[aid] = t2
+		var t3: Texture2D = _try_load_tex(ALLY_TEX_V3_PATHS[aid])
+		if t3:
+			_ally_tex_v3[aid] = t3
+	_apply_portrait_pack(_portrait_pack, false)
+	if UI_TEXTURE_PREVIEW:
+		if ResourceLoader.exists(UI_TEX_BTN_PRI):
+			_ui_tex_btn_pri = load(UI_TEX_BTN_PRI)
+		if ResourceLoader.exists(UI_TEX_BTN_PRI_P):
+			_ui_tex_btn_pri_p = load(UI_TEX_BTN_PRI_P)
+		if ResourceLoader.exists(UI_TEX_BTN_SEC):
+			_ui_tex_btn_sec = load(UI_TEX_BTN_SEC)
+		if ResourceLoader.exists(UI_TEX_CLOSE):
+			_ui_tex_close = load(UI_TEX_CLOSE)
+		if ResourceLoader.exists(UI_TEX_CHECK):
+			_ui_tex_check = load(UI_TEX_CHECK)
+		if ResourceLoader.exists(UI_TEX_GEAR):
+			_ui_tex_gear = load(UI_TEX_GEAR)
+
+
+func _apply_portrait_pack(pack: int, refresh_ui: bool = true) -> void:
+	_portrait_pack = clampi(pack, 1, 3)
+	var src: Dictionary = _ally_tex_v1
+	if _portrait_pack == 3:
+		src = _ally_tex_v3
+	elif _portrait_pack == 2:
+		src = _ally_tex_v2
+	_ally_tex.clear()
+	for aid in ALLY_TEX_V1_PATHS:
+		if src.has(aid):
+			_ally_tex[aid] = src[aid]
+		elif _ally_tex_v3.has(aid):
+			_ally_tex[aid] = _ally_tex_v3[aid]
+		elif _ally_tex_v2.has(aid):
+			_ally_tex[aid] = _ally_tex_v2[aid]
+		elif _ally_tex_v1.has(aid):
+			_ally_tex[aid] = _ally_tex_v1[aid]
+	if not refresh_ui:
+		return
+	for aid in _card_widgets:
+		var w: Dictionary = _card_widgets[aid]
+		if is_instance_valid(w.get("portrait")) and _ally_tex.has(aid):
+			w.portrait.texture = _ally_tex[aid]
+	if is_instance_valid(_bark_wrap) and _bark_wrap.visible and _bark_wrap.has_meta("hero_id"):
+		var hid: String = String(_bark_wrap.get_meta("hero_id"))
+		if is_instance_valid(_bark_portrait) and _ally_tex.has(hid):
+			_bark_portrait.texture = _ally_tex[hid]
+	_refresh_daily()
+
+
+func _loc_index() -> int:
+	if _loc_preview >= 0 and not Game.store_shot_mode:
+		return _loc_preview % LOC_BG_PATHS.size()
+	return (Game.location() - 1) % LOC_BG_PATHS.size()
 
 
 # Выбор врага: пул локации, мягкий стаггер, без повтора подряд, босс = ключевой
 func _pick_enemy() -> String:
-	var li: int = (Game.location() - 1) % LOCATION_ENEMIES.size()
+	if _enemy_preview_id != "":
+		return _enemy_preview_id
+	var li: int = _loc_index() % LOCATION_ENEMIES.size()
 	var pool: Array = LOCATION_ENEMIES[li]
 	if pool.is_empty():
 		return "zombie"
@@ -579,7 +1045,7 @@ func _pick_enemy() -> String:
 		cands = pool.slice(0, mini(3, pool.size()))   # босс — один из ключевых (дом)
 	else:
 		var sil: int = (Game.stage - 1) % Balance.STAGES_PER_LOCATION
-		var unlocked: int = clampi(3 + int(sil / 8), 3, pool.size())   # мягкий стаггер: 3 → 5 к ~16 стадии
+		var unlocked: int = clampi(3 + int(sil / 6), 3, pool.size())   # SPL25: дом → гости к концу слота
 		cands = pool.slice(0, unlocked)
 	# не повторять одного и того же подряд
 	var fresh: Array = []
@@ -597,12 +1063,26 @@ func _update_enemy_visual() -> void:
 	_current_enemy = _pick_enemy()
 	if _enemy_textures.has(_current_enemy):
 		_enemy.texture = _enemy_textures[_current_enemy]
-	var li: int = (Game.location() - 1) % LOC_BG_PATHS.size()
-	if _loc_bg.has(li) and is_instance_valid(_bgrect):
+	elif is_instance_valid(_enemy):
+		var t: Texture2D = _try_load_tex(ENEMY_TEX_DIR + _current_enemy + ".png")
+		if t:
+			_enemy_textures[_current_enemy] = t
+			_enemy.texture = t
+	_apply_preview_bg()
+
+
+func _apply_preview_bg() -> void:
+	if not is_instance_valid(_bgrect):
+		return
+	if _bg_preview_tex and not Game.store_shot_mode:
+		_bgrect.texture = _bg_preview_tex
+		return
+	var li: int = _loc_index()
+	if _loc_bg.has(li):
 		_bgrect.texture = _loc_bg[li]
 
 
-# --- Рельс карточек героев ---------------------------------------------------
+# --- Список Труппы (горизонтальный рельс) ------------------------------------
 func _build_cards() -> void:
 	if not is_instance_valid(_cards):
 		return
@@ -610,14 +1090,13 @@ func _build_cards() -> void:
 		c.queue_free()
 	_card_widgets.clear()
 	_klinok_w = {}
-	# левый край карточек выровнен с мультами (без ведущего поля); хвостовое поле —
-	# чтобы при прокрутке до конца крайняя карточка не липла к краю
-	_cards.add_child(_make_klinok_card())   # «Клинок» — первая карточка
+	_cards.add_child(_make_klinok_card())
 	for aid in Game.ALLY_ORDER:
 		_cards.add_child(_make_card(aid))
 	for nm in LOCKED_HEROES:
 		_cards.add_child(_make_locked_card(nm))
-	_cards.add_child(_rail_pad())            # поле справа
+	_cards.add_child(_rail_pad())
+
 
 func _rail_pad() -> Control:
 	var pad := Control.new()
@@ -625,41 +1104,302 @@ func _rail_pad() -> Control:
 	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return pad
 
-func _make_klinok_card() -> Control:
-	var color := Color("#45c8c0")   # сталь-циан — отличается от героев
+
+func _row_panel(accent: Color, recruited: bool) -> StyleBoxFlat:
+	var s := _flat(SURF, accent if recruited else SURF_BORDER, 12, 2, 6)
+	s.content_margin_left = 6.0
+	s.content_margin_top = 6.0
+	s.content_margin_bottom = 6.0
+	s.content_margin_right = 6.0
+	return s
+
+
+func _card_shell(accent: Color, recruited: bool) -> PanelContainer:
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(166, 0)   # = ширине кнопки-мультипликатора
+	card.custom_minimum_size = Vector2(CARD_W, 0)
 	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_theme_stylebox_override("panel", _flat(SURF, color, 14, 3, 6))
-	var vb := VBoxContainer.new()
-	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_theme_constant_override("separation", 4)
+	card.clip_contents = true
+	card.add_theme_stylebox_override("panel", _row_panel(accent, recruited))
+	return card
+
+
+func _card_portrait(tex, color: Color, recruited: bool, fallback: String) -> Panel:
 	var pf := Panel.new()
 	pf.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, PORTRAIT_BG, 10, 0, 0))
 	pf.custom_minimum_size = Vector2(0, PORTRAIT_H)
 	pf.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	pf.clip_contents = true
-	if _sword_tex:
+	if tex:
 		var tr := TextureRect.new()
-		tr.texture = _sword_tex
+		tr.texture = tex
 		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tr.texture_filter = TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		tr.set_anchors_preset(Control.PRESET_FULL_RECT)
 		tr.offset_left = 4; tr.offset_top = 4; tr.offset_right = -4; tr.offset_bottom = -4
 		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if not recruited:
+			tr.modulate = Color(0.22, 0.20, 0.28, 1.0)
 		pf.add_child(tr)
+		pf.set_meta("portrait", tr)
 	else:
 		var ic := Label.new()
-		ic.text = "⚔"
+		ic.text = fallback
 		ic.set_anchors_preset(Control.PRESET_FULL_RECT)
 		ic.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		ic.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		ic.add_theme_font_size_override("font_size", 88)
-		ic.add_theme_color_override("font_color", color)
+		ic.add_theme_font_size_override("font_size", 72)
+		ic.add_theme_color_override("font_color", color if recruited else Color(0.34, 0.30, 0.40))
 		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		pf.add_child(ic)
+	return pf
+
+
+func _row_cost_btn() -> Button:
+	var cost := Button.new()
+	cost.add_theme_font_size_override("font_size", F_SMALL)
+	cost.custom_minimum_size = Vector2(0, 56)
+	cost.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cost.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	cost.focus_mode = Control.FOCUS_NONE
+	cost.autowrap_mode = TextServer.AUTOWRAP_OFF
+	cost.text = ""
+	cost.clip_contents = true
+	cost.set_meta("width_cap", CARD_W - 16.0)
+	_btn_hud(cost, "primary")
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 6)
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.offset_left = 8
+	row.offset_right = -8
+	var price_l := Label.new()
+	_lab(price_l, F_SMALL, GOLD)
+	price_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ic := TextureRect.new()
+	ic.texture = _gold_tex
+	ic.custom_minimum_size = Vector2(22, 22)
+	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ic.visible = _gold_tex != null
+	var qty_l := Label.new()
+	_lab(qty_l, F_SMALL, GOLD)
+	qty_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(price_l)
+	row.add_child(ic)
+	row.add_child(qty_l)
+	cost.add_child(row)
+	cost.set_meta("price_l", price_l)
+	cost.set_meta("qty_l", qty_l)
+	cost.set_meta("gold_ic", ic)
+	return cost
+
+
+func _set_buy_face(btn: Button, price: float, n: int, note: String = "") -> void:
+	if not is_instance_valid(btn) or not btn.has_meta("price_l"):
+		return
+	var price_l: Label = btn.get_meta("price_l")
+	var qty_l: Label = btn.get_meta("qty_l")
+	var ic: TextureRect = btn.get_meta("gold_ic")
+	if note != "":
+		btn.remove_meta("price_target")
+		btn.remove_meta("price_shown")
+		btn.remove_meta("price_roll_dur")
+		btn.remove_meta("price_roll_t")
+		btn.remove_meta("price_from")
+		price_l.text = note
+		qty_l.visible = false
+		if is_instance_valid(ic):
+			ic.visible = false
+		_fit_buy_btn(btn)
+		return
+	qty_l.visible = true
+	if is_instance_valid(ic):
+		ic.visible = _gold_tex != null
+	var nn: int = maxi(1, n)
+	var old_n: int = int(btn.get_meta("qty_n")) if btn.has_meta("qty_n") else nn
+	qty_l.text = "×%d" % nn
+	if old_n != nn:
+		_flash_mod(qty_l)
+		var from_v: float = float(btn.get_meta("price_shown")) if btn.has_meta("price_shown") else price
+		btn.set_meta("price_from", from_v)
+		btn.set_meta("price_roll_t", 0.0)
+		btn.set_meta("price_roll_dur", BUY_ROLL_DUR)
+	btn.set_meta("qty_n", nn)
+	btn.set_meta("price_target", price)
+	if not btn.has_meta("price_shown"):
+		btn.set_meta("price_shown", price)
+		price_l.text = fmt(price)
+	_fit_buy_btn(btn)
+
+
+func _set_buy_disabled(btn: Button, cant: bool) -> void:
+	if not is_instance_valid(btn):
+		return
+	var was: bool = bool(btn.get_meta("was_dis")) if btn.has_meta("was_dis") else cant
+	btn.disabled = cant
+	if was and not cant:
+		_flash_mod(btn)
+	btn.set_meta("was_dis", cant)
+
+
+func _flash_mod(n: Control) -> void:
+	if not is_instance_valid(n):
+		return
+	n.modulate = Color(1.55, 1.45, 1.1)
+	var tw := n.create_tween()
+	tw.tween_property(n, "modulate", Color.WHITE, 0.22)
+
+
+func _on_buy_spent(btn: Button, n: int) -> void:
+	if not is_instance_valid(btn):
+		return
+	_buy_coin_spin(btn)
+	if n >= 10:
+		_buy_qty_burst(btn, n)
+
+
+func _buy_coin_spin(btn: Button) -> void:
+	if not btn.has_meta("gold_ic"):
+		return
+	var ic: TextureRect = btn.get_meta("gold_ic")
+	if not is_instance_valid(ic) or not ic.visible:
+		return
+	ic.pivot_offset = ic.size * 0.5
+	ic.rotation = 0.0
+	var tw := ic.create_tween()
+	tw.tween_property(ic, "rotation", TAU, 0.22).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(func():
+		if is_instance_valid(ic):
+			ic.rotation = 0.0)
+
+
+func _buy_qty_burst(btn: Button, n: int) -> void:
+	if not is_instance_valid(_fx) or not btn.has_meta("qty_l"):
+		return
+	var src: Label = btn.get_meta("qty_l")
+	if not is_instance_valid(src) or not src.visible:
+		return
+	var ghost := Label.new()
+	ghost.text = "×%d" % n
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lab(ghost, F_SUB, GOLD)
+	_fx.add_child(ghost)
+	ghost.global_position = src.global_position
+	var start_y: float = ghost.position.y
+	var tw := ghost.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(ghost, "position:y", start_y - 36.0, 0.38).set_trans(Tween.TRANS_QUAD)
+	tw.tween_property(ghost, "modulate:a", 0.0, 0.38)
+	tw.chain().tween_callback(ghost.queue_free)
+
+
+func _tick_buy_prices(delta: float) -> void:
+	if _klinok_w.has("cost"):
+		_tick_one_buy(_klinok_w.cost as Button, delta)
+	for aid in _card_widgets:
+		var w: Dictionary = _card_widgets[aid]
+		if w.has("cost"):
+			_tick_one_buy(w.cost as Button, delta)
+
+
+func _tick_one_buy(btn: Button, delta: float) -> void:
+	if not is_instance_valid(btn) or not btn.has_meta("price_target") or not btn.has_meta("price_l"):
+		return
+	var shown: float = float(btn.get_meta("price_shown"))
+	var target: float = float(btn.get_meta("price_target"))
+	if btn.has_meta("price_roll_dur"):
+		var dur: float = float(btn.get_meta("price_roll_dur"))
+		var t: float = float(btn.get_meta("price_roll_t")) + delta
+		var from_v: float = float(btn.get_meta("price_from"))
+		var u: float = clampf(t / maxf(dur, 0.001), 0.0, 1.0)
+		u = 1.0 - (1.0 - u) * (1.0 - u)
+		shown = lerpf(from_v, target, u)
+		if t >= dur:
+			shown = target
+			btn.remove_meta("price_roll_dur")
+			btn.remove_meta("price_roll_t")
+			btn.remove_meta("price_from")
+		else:
+			btn.set_meta("price_roll_t", t)
+	elif abs(shown - target) < 1.0:
+		shown = target
+	else:
+		shown = lerp(shown, target, clampf(delta * 7.0, 0.0, 1.0))
+	btn.set_meta("price_shown", shown)
+	var price_l: Label = btn.get_meta("price_l")
+	var nxt := fmt(shown)
+	if price_l.text != nxt:
+		price_l.text = nxt
+
+
+func _label_text_w(l: Label) -> float:
+	if not is_instance_valid(l) or not l.visible:
+		return 0.0
+	return _string_w(l, l.text)
+
+
+func _string_w(l: Label, s: String) -> float:
+	if not is_instance_valid(l) or s.is_empty():
+		return 0.0
+	var f: Font = l.get_theme_font("font")
+	var fs: int = l.get_theme_font_size("font_size")
+	if f == null:
+		return l.get_minimum_size().x
+	return f.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+
+
+func _max_mult_width() -> float:
+	var b: Button = _mult_btns.get(-1) as Button
+	if is_instance_valid(b) and b.size.x > 8.0:
+		return b.size.x
+	if is_instance_valid(_mult_row) and _mult_row.size.x > 8.0:
+		return (_mult_row.size.x - 18.0) / 4.0
+	return 166.0
+
+
+func _fit_buy_btn(btn: Button) -> void:
+	if not is_instance_valid(btn) or not btn.has_meta("price_l"):
+		return
+	var cap: float = float(btn.get_meta("width_cap")) if btn.has_meta("width_cap") else _max_mult_width()
+	var need: float = 24.0
+	var price_l: Label = btn.get_meta("price_l") as Label
+	var price_s: String = price_l.text if is_instance_valid(price_l) else ""
+	if btn.has_meta("price_target"):
+		var ts := fmt(float(btn.get_meta("price_target")))
+		if _string_w(price_l, ts) > _string_w(price_l, price_s):
+			price_s = ts
+	need += _string_w(price_l, price_s)
+	var ic: TextureRect = btn.get_meta("gold_ic") as TextureRect
+	if is_instance_valid(ic) and ic.visible:
+		need += 28.0
+	var qty_l: Label = btn.get_meta("qty_l") as Label
+	if is_instance_valid(qty_l) and qty_l.visible:
+		need += 4.0 + _label_text_w(qty_l)
+	btn.custom_minimum_size.x = cap if btn.has_meta("width_cap") else maxf(cap, need)
+
+
+func _sync_buy_widths() -> void:
+	if _klinok_w.has("cost"):
+		_fit_buy_btn(_klinok_w.cost as Button)
+	for aid in _card_widgets:
+		var w: Dictionary = _card_widgets[aid]
+		if w.has("cost"):
+			_fit_buy_btn(w.cost as Button)
+
+
+func _make_klinok_card() -> Control:
+	var color := Color("#45c8c0")
+	var card := _card_shell(color, true)
+	var vb := VBoxContainer.new()
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_theme_constant_override("separation", 4)
+	var pf := _card_portrait(_sword_tex, color, true, ">")
 	var name_l := Label.new()
 	name_l.text = "Клинок"
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -671,176 +1411,284 @@ func _make_klinok_card() -> Control:
 	var level_l := Label.new()
 	level_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lab(level_l, F_SMALL, color)
+	level_l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	level_l.clip_text = true
 	level_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var cost := Button.new()
-	cost.add_theme_font_size_override("font_size", F_SMALL)
-	cost.custom_minimum_size = Vector2(0, 56)
-	cost.focus_mode = Control.FOCUS_NONE
-	cost.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_style_button(cost, WOOD, WOOD_BORDER, GOLD)
+	var cost := _row_cost_btn()
 	cost.pressed.connect(func():
-		if Game.buy_tap_n(_eff_n(Game.tap_max_affordable())):
-			_fly_coins(_global_center(_gold_label), _global_center(cost), 9, GOLD)
+		var n: int = _eff_n(Game.tap_max_affordable())
+		if Game.buy_tap_n(n):
+			_on_buy_spent(cost, n)
+			_fly_coins(_global_center(_gold_label), _global_center(cost), 9, GOLD, null, null, 0, false)
 			_frame_pop(_klinok_w.get("frame")))
-	cost.button_down.connect(_punch.bind(cost))
-	vb.add_child(pf); vb.add_child(name_l); vb.add_child(level_l); vb.add_child(cost)
+	vb.add_child(pf)
+	vb.add_child(name_l)
+	vb.add_child(level_l)
+	vb.add_child(cost)
 	card.add_child(vb)
 	_klinok_w = {"frame": card, "name": name_l, "level": level_l, "cost": cost}
 	return card
 
+
 func _make_card(aid: String) -> Control:
 	var color: Color = ALLY_COLORS.get(aid, GREEN)
 	var recruited: bool = Game.ally_levels.get(aid, 0) > 0
-
-	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(166, 0)   # = ширине кнопки-мультипликатора
-	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE   # тело пропускает драг к скроллу
-	card.add_theme_stylebox_override("panel", _flat(SURF, color if recruited else SURF_BORDER, 14, 3, 6))
-
+	var card := _card_shell(color, recruited)
 	var vb := VBoxContainer.new()
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_theme_constant_override("separation", 4)
-
-	var pf := Panel.new()
-	pf.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, PORTRAIT_BG, 10, 0, 0))
-	pf.custom_minimum_size = Vector2(0, PORTRAIT_H)   # фикс. высота — все портреты одинаковые
-	pf.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	pf.clip_contents = true
-	var tr := TextureRect.new()
-	tr.texture = _ally_tex.get(aid)
-	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED   # заполнить по ширине
-	tr.set_anchors_preset(Control.PRESET_FULL_RECT)
-	tr.offset_left = 4; tr.offset_top = 4; tr.offset_right = -4; tr.offset_bottom = -4
-	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if not recruited:
-		tr.modulate = Color(0.22, 0.20, 0.28, 1.0)   # силуэт «ещё не собран»
-	pf.add_child(tr)
-	if tr.texture == null:
-		# арт ещё не нарисован — плейсхолдер «?» в цвете героя
-		var ph := Label.new()
-		ph.text = "?"
-		ph.set_anchors_preset(Control.PRESET_FULL_RECT)
-		ph.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		ph.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		ph.add_theme_font_size_override("font_size", 72)
-		ph.add_theme_color_override("font_color", color if recruited else Color(0.34, 0.30, 0.40))
-		ph.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pf.add_child(ph)
-
+	var pf := _card_portrait(_ally_tex.get(aid), color, recruited, "?")
+	var tr: TextureRect = pf.get_meta("portrait") if pf.has_meta("portrait") else null
 	var name_l := Label.new()
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_l.autowrap_mode = TextServer.AUTOWRAP_OFF   # имя всегда в одну строку
+	name_l.autowrap_mode = TextServer.AUTOWRAP_OFF
 	name_l.clip_text = true
 	_lab(name_l, F_SMALL, TXT if recruited else MUTED)
 	name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if _header_font: name_l.add_theme_font_override("font", _header_font)
-
 	var level_l := Label.new()
 	level_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lab(level_l, F_SMALL, color if recruited else MUTED)
+	level_l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	level_l.clip_text = true
 	level_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	var cost := Button.new()
-	cost.add_theme_font_size_override("font_size", F_SMALL)
-	cost.custom_minimum_size = Vector2(0, 56)
-	cost.focus_mode = Control.FOCUS_NONE
-	cost.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_style_button(cost, WOOD, WOOD_BORDER, GOLD)
+	var cost := _row_cost_btn()
 	cost.pressed.connect(func():
-		if Game.buy_ally_n(aid, _eff_n(Game.ally_max_affordable(aid))):
-			_fly_coins(_global_center(_gold_label), _global_center(cost), 9, GOLD)
+		var n: int = _eff_n(Game.ally_max_affordable(aid))
+		if Game.buy_ally_n(aid, n):
+			_on_buy_spent(cost, n)
+			_fly_coins(_global_center(_gold_label), _global_center(cost), 9, GOLD, null, null, 0, false)
 			_card_pop(aid))
-	cost.button_down.connect(_punch.bind(cost))
-
-	vb.add_child(pf); vb.add_child(name_l); vb.add_child(level_l); vb.add_child(cost)
+	vb.add_child(pf)
+	vb.add_child(name_l)
+	vb.add_child(level_l)
+	vb.add_child(cost)
 	card.add_child(vb)
 	_card_widgets[aid] = {"frame": card, "portrait": tr, "name": name_l, "level": level_l, "cost": cost, "color": color, "recruited": recruited}
 	return card
 
 
 func _make_locked_card(hero_name: String) -> Control:
-	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(166, 0)   # = ширине кнопки-мультипликатора
-	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_theme_stylebox_override("panel", _flat(BG, SURF_BORDER, 14, 2, 6))
+	var card := _card_shell(SURF_BORDER, false)
 	var vb := VBoxContainer.new()
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_theme_constant_override("separation", 4)
-	var pf := Panel.new()
-	pf.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, Color("#3a2b44"), 10, 2, 0))
-	pf.custom_minimum_size = Vector2(0, PORTRAIT_H)
-	pf.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	pf.clip_contents = true
-	var q := Label.new()
-	q.text = "?"
-	q.set_anchors_preset(Control.PRESET_FULL_RECT)
-	q.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	q.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	q.add_theme_font_size_override("font_size", 72)
-	q.add_theme_color_override("font_color", Color("#3a2b44"))
-	q.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pf.add_child(q)
+	var pf := _card_portrait(null, MUTED, false, "?")
 	var name_l := Label.new()
 	name_l.text = hero_name
 	name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_l.autowrap_mode = TextServer.AUTOWRAP_OFF
 	name_l.clip_text = true
-	name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_lab(name_l, F_SMALL, MUTED)
+	name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if _header_font: name_l.add_theme_font_override("font", _header_font)
 	var lock_l := Label.new()
-	lock_l.text = "—"
+	lock_l.text = "Скоро"
 	lock_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lock_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_lab(lock_l, F_SMALL, Color("#5a4a66"))
-	var soon := Label.new()
-	soon.text = "Скоро"
-	soon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	soon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	soon.custom_minimum_size = Vector2(0, 56)
-	soon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_lab(soon, F_SMALL, Color("#5a4a66"))
-	vb.add_child(pf); vb.add_child(name_l); vb.add_child(lock_l); vb.add_child(soon)
+	lock_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(pf)
+	vb.add_child(name_l)
+	vb.add_child(lock_l)
 	card.add_child(vb)
 	return card
 
 
-# --- Панель действий ---------------------------------------------------------
+# --- xN в шапке листа --------------------------------------------------------
 func _build_action() -> void:
-	if not is_instance_valid(_action_bar):
+	if not is_instance_valid(_mult_row):
 		return
-	for c in _action_bar.get_children():
+	for c in _mult_row.get_children():
 		c.queue_free()
 	_mult_btns.clear()
-
-	# Ряд множителей — 4 равные кнопки
-	var mrow := HBoxContainer.new()
-	mrow.add_theme_constant_override("separation", 6)
 	for m in MULTS:
 		var b := Button.new()
 		b.text = "MAX" if m == -1 else ("x%d" % m)
 		b.add_theme_font_size_override("font_size", F_SUB)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.custom_minimum_size = Vector2(0, 52)
+		b.custom_minimum_size = Vector2(0, 48)
 		b.focus_mode = Control.FOCUS_NONE
 		b.pressed.connect(func(): _set_mult(m))
-		b.button_down.connect(_punch.bind(b))
 		_mult_btns[m] = b
-		mrow.add_child(b)
-	_action_bar.add_child(mrow)
-	# «Наточить клинок» теперь карточка в рельсе (см. _make_klinok_card)
+		_mult_row.add_child(b)
+
+
+func _build_tabs() -> void:
+	if not is_instance_valid(_tab_bar):
+		return
+	for c in _tab_bar.get_children():
+		c.queue_free()
+	_tab_btns.clear()
+	# Иконки табов — бэклог (art/ui/tabs/candidates); пока только полное имя.
+	var specs: Array = [
+		["troupe", "Труппа"],
+		["skills", "Навыки"],
+		["shop", "Лавка"],
+		["tale", "Сказка"],
+	]
+	for s in specs:
+		_tab_bar.add_child(_make_tab_btn(String(s[0]), String(s[1])))
+	_refresh_tabs()
+
+
+func _make_tab_btn(id: String, caption: String) -> Button:
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.custom_minimum_size = Vector2(0, 84)
+	b.clip_contents = true
+	var cap := Label.new()
+	cap.text = caption
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Полное имя на всю плитку (~170×84 на 720): крупнее бывшего F_SMALL подписи.
+	_lab(cap, F_BODY, TXT)
+	b.add_child(cap)
+	b.set_meta("cap", cap)
+	b.pressed.connect(_on_tab_pressed.bind(id))
+	b.button_down.connect(func():
+		if not _tab_locked(id):
+			_punch(b))
+	_tab_btns[id] = b
+	return b
+
+
+func _tab_locked(id: String) -> bool:
+	match id:
+		"troupe":
+			return false
+		"tale":
+			return not Game.can_prestige()
+		_:
+			return true
+
+
+func _on_tab_pressed(id: String) -> void:
+	if id == "troupe":
+		_refresh_tabs()
+		return
+	if _tab_locked(id):
+		_show_tab_soon(_tab_btns.get(id) as Control)
+		return
+	if id == "tale":
+		_open_prestige()
+	_refresh_tabs()
+
+
+func _hide_tab_soon() -> void:
+	if is_instance_valid(_tab_soon_layer):
+		_tab_soon_layer.queue_free()
+	elif is_instance_valid(_tab_soon):
+		_tab_soon.queue_free()
+	_tab_soon_layer = null
+	_tab_soon = null
+	_tab_soon_src = null
+
+
+func _tab_rest_rect(btn: Control) -> Rect2:
+	return Rect2(btn.global_position, btn.size)
+
+
+func _show_tab_soon(btn: Control) -> void:
+	if not is_instance_valid(btn):
+		return
+	_hide_tab_soon()
+	var layer := CanvasLayer.new()
+	layer.layer = UI_Z_TOAST
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(layer)
+	_tab_soon_layer = layer
+	_tab_soon_src = btn
+	var host := Control.new()
+	host.set_anchors_preset(Control.PRESET_FULL_RECT)
+	host.mouse_filter = Control.MOUSE_FILTER_STOP
+	host.gui_input.connect(_on_tab_soon_input)
+	layer.add_child(host)
+	var r: Rect2 = _tab_rest_rect(btn)
+	var view: Rect2 = get_viewport().get_visible_rect()
+	var w: float = r.size.x
+	var h: float = r.size.y
+	var pad: float = UI_CHROME
+	var min_x: float = view.position.x + pad
+	var max_r: float = view.position.x + view.size.x - pad
+	var x: float = r.position.x + r.size.x - w
+	if x + w > max_r:
+		x = max_r - w
+	if x < min_x:
+		x = min_x
+	var box := Panel.new()
+	box.position = Vector2(x, r.position.y - h)
+	box.size = Vector2(w, h)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 10, 2, 8))
+	var lbl := Label.new()
+	lbl.text = "Скоро"
+	lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lab(lbl, F_BODY, GOLD)
+	box.add_child(lbl)
+	host.add_child(box)
+	_tab_soon = box
+	var tw := box.create_tween()
+	tw.tween_interval(1.0)
+	tw.tween_property(box, "modulate:a", 0.0, 0.12)
+	tw.tween_callback(_hide_tab_soon)
+
+
+func _on_tab_soon_input(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	var mb := event as InputEventMouseButton
+	if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var pos: Vector2 = mb.position
+	if is_instance_valid(_tab_soon_src) and _tab_rest_rect(_tab_soon_src).has_point(pos):
+		_show_tab_soon(_tab_soon_src)
+		get_viewport().set_input_as_handled()
+		return
+	for id in _tab_btns:
+		var b: Button = _tab_btns[id]
+		if is_instance_valid(b) and _tab_rest_rect(b).has_point(pos):
+			_hide_tab_soon()
+			_on_tab_pressed(id)
+			get_viewport().set_input_as_handled()
+			return
+	_hide_tab_soon()
+	get_viewport().set_input_as_handled()
+
+
+func _refresh_tabs() -> void:
+	for id in _tab_btns:
+		var b: Button = _tab_btns[id]
+		if not is_instance_valid(b):
+			continue
+		var locked: bool = _tab_locked(id)
+		var cap: Label = b.get_meta("cap")
+		if id == "troupe":
+			_btn_hud(b, "selected")
+			b.modulate = Color(1, 1, 1, 1)
+			if is_instance_valid(cap): _lab(cap, F_BODY, DARK)
+		elif locked:
+			_btn_hud(b, "secondary")
+			b.modulate = Color(0.72, 0.70, 0.76, 1.0)
+			if is_instance_valid(cap): _lab(cap, F_BODY, MUTED)
+		else:
+			b.modulate = Color(1, 1, 1, 1)
+			_btn_hud(b, "primary")
+			if is_instance_valid(cap): _lab(cap, F_BODY, GOLD)
 
 func _set_mult(m: int) -> void:
 	_buy_mult = m
 	for k in _mult_btns:
 		var b: Button = _mult_btns[k]
 		var active: bool = (k == m)
-		_style_button(b, GOLD if active else SURF, WOOD_BORDER if active else SURF_BORDER, DARK if active else MUTED)
+		_btn_hud(b, "selected" if active else "secondary")
+		if active:
+			_flash_mod(b)
 	_refresh()
 
 func _eff_n(max_aff: int) -> int:
@@ -920,6 +1768,9 @@ func _on_tap() -> void:
 		_shake_enemy()
 	if _tut_step == 0:
 		_tut_taps += 1
+	# комбо-сок уже через Game.combo_changed; tier_up дублируем punch на враге
+	if bool(res.get("combo_tier_up", false)):
+		_punch(_enemy)
 
 func _on_reward_pressed() -> void:
 	if _reward_btn: _reward_btn.disabled = true
@@ -927,21 +1778,24 @@ func _on_reward_pressed() -> void:
 
 func _on_rewarded(placement: String) -> void:
 	if placement == "double_gold":
+		_klad_watched_session = true   # сессионный повтор-тост больше не нужен
+		_side_klad_idle_sync()
 		Economy.add_gold(Game.rewarded_gold_bonus())
-		if _reward_btn:
-			_fly_coins(_global_center(_reward_btn), _global_center(_gold_label), 16, GOLD, _gold_tex, _gold_icon)
+		_fly_coins(_side_klad_center(), _global_center(_gold_label), 16, GOLD, _gold_tex, _gold_icon)
 	elif placement == "boss_time":
 		get_tree().paused = false
 		Game.boss_grant_time(15.0)   # +15 секунд, бой продолжается
 	elif placement == "boss_dmg":
 		Game.activate_boss_ad()      # ×2 урон до конца этого босса
+		_side_slot_set_visible(_side_x2, false)
+		_side_x2_pulse(false)
 		if is_instance_valid(_boss_ad_btn):
-			_boss_ad_btn.visible = false
 			_boss_ad_btn.disabled = false
 		_punch(_boss_label)
 	elif placement == "offline_x2":
 		_collect_offline(2.0)        # ролик досмотрен — копилка удвоена
-	if _reward_btn: _reward_btn.disabled = false
+	if is_instance_valid(_reward_btn):
+		_reward_btn.disabled = false
 
 func _sync_bells_topbar() -> void:
 	if not is_instance_valid(_bells_label):
@@ -975,7 +1829,7 @@ func _build_punk() -> void:
 	_punk_btn.custom_minimum_size = Vector2(0, 64)
 	_punk_btn.focus_mode = Control.FOCUS_NONE
 	_punk_btn.clip_contents = true
-	_style_button(_punk_btn, Color("#2a0f14"), BLOOD, Color("#ff5a4f"))
+	_btn_hud(_punk_btn, "ad")
 	_punk_fill = ColorRect.new()   # полоса заряда за текстом
 	_punk_fill.color = Color(0.71, 0.07, 0.10, 0.55)
 	_punk_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1001,14 +1855,14 @@ func _build_punk() -> void:
 		slot.add_child(_punk_btn)
 		# и якоря, и отступы в ноль — иначе кнопка сохраняет свой мини-размер (была w=20)
 		_punk_btn.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	elif is_instance_valid(_action_bar):
-		_action_bar.add_child(_punk_btn)
+	elif is_instance_valid(_tab_bar):
+		_tab_bar.add_child(_punk_btn)
 	_build_punk_fx()
 	_punk_visual()
 
 func _build_punk_fx() -> void:
 	_punk_layer = CanvasLayer.new()
-	_punk_layer.layer = 50
+	_punk_layer.layer = UI_Z_PUNK
 	add_child(_punk_layer)
 	_punk_rect = ColorRect.new()
 	_punk_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1306,8 +2160,12 @@ func _on_boss_changed(is_boss: bool, time_left: float) -> void:
 	_boss_prev_is_boss = is_boss
 	_boss_label.visible = is_boss
 	_pips.visible = not is_boss
-	if is_instance_valid(_boss_ad_btn):   # оффер ×2 урона: только на боссе, раз за босса
-		_boss_ad_btn.visible = is_boss and not Game.boss_ad_active
+	if is_instance_valid(_boss_ad_btn):   # оффер ×2: сайдбар справа, раз за босса
+		_side_slot_set_visible(_side_x2, is_boss and not Game.boss_ad_active)
+		if is_boss and not Game.boss_ad_active:
+			_side_x2_pulse(true)
+		else:
+			_side_x2_pulse(false)
 	if is_boss:
 		_boss_label.text = "БОСС · %.0f с" % max(0.0, time_left)
 
@@ -1316,8 +2174,11 @@ func _refresh() -> void:
 	if _skulls_label:
 		_skulls_label.text = "%d" % Economy.premium   # скрытый лейбл 3-го ресурса (visible=false)
 	if _title_label:
-		var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
-		_title_label.text = "%s · %d" % [loc, Game.stage]
+		if _bg_preview_tex and _loc_dev_opt and _loc_dev_opt.selected > 0:
+			_title_label.text = _loc_dev_opt.get_item_text(_loc_dev_opt.selected)
+		else:
+			var loc: String = LOCATIONS[_loc_index() % LOCATIONS.size()]
+			_title_label.text = "%s · %d" % [loc, Game.stage]
 
 	# карточки героев
 	for aid in _card_widgets:
@@ -1329,15 +2190,15 @@ func _refresh() -> void:
 		w.name.text = def.name
 		if not Game.hero_unlocked(aid):   # гастролёр ещё в пути (анлок через афишу)
 			w.level.text = "гастролёр в пути"
-			w.cost.text = "Прибудет\nДень %d" % Game.hero_arrival_day(aid)
-			w.cost.disabled = true
+			_set_buy_face(w.cost, 0.0, 1, "День %d" % Game.hero_arrival_day(aid))
+			_set_buy_disabled(w.cost, true)
 			_card_hire_pulse(w, false)
 			continue
 		var n: int = _eff_n(Game.ally_max_affordable(aid))
 		var cost: float = Game.ally_cost_n(aid, max(1, n))
-		w.level.text = "ур. %d" % lvl if lvl > 0 else "не нанят"
-		w.cost.text = ("×%d\n%s" % [max(1, n), fmt(cost)]) if lvl > 0 else ("Нанять\n%s" % fmt(cost))
-		w.cost.disabled = Economy.gold < cost
+		w.level.text = "ур. %d · %s/с" % [lvl, fmt(Game.ally_dps(aid))]
+		_set_buy_face(w.cost, cost, max(1, n))
+		_set_buy_disabled(w.cost, Economy.gold < cost)
 		_card_hire_pulse(w, lvl == 0 and Economy.gold >= cost)   # новый герой по карману — зовёт
 		# первый найм: оживляем силуэт → цвет + рамка героя
 		var recruited: bool = lvl > 0
@@ -1346,18 +2207,20 @@ func _refresh() -> void:
 			if is_instance_valid(w.portrait):
 				w.portrait.modulate = Color.WHITE if recruited else Color(0.22, 0.20, 0.28, 1.0)
 			if is_instance_valid(w.frame):
-				w.frame.add_theme_stylebox_override("panel", _flat(SURF, w.color if recruited else SURF_BORDER, 14, 3, 6))
+				w.frame.add_theme_stylebox_override("panel", _row_panel(w.color, recruited))
 			if is_instance_valid(w.name):
 				_lab(w.name, F_SMALL, TXT if recruited else MUTED)
 
 	# карточка «Клинок» (прокачка тапа)
 	if _klinok_w.has("cost") and is_instance_valid(_klinok_w.cost):
 		var tn: int = _eff_n(Game.tap_max_affordable())
-		_klinok_w.level.text = "ур. %d" % Game.tap_level
-		_klinok_w.cost.text = "×%d\n%s" % [max(1, tn), fmt(Game.tap_cost_n(max(1, tn)))]
-		_klinok_w.cost.disabled = Economy.gold < Game.tap_cost_n(max(1, tn))
+		_klinok_w.level.text = "ур. %d · %s" % [Game.tap_level, fmt(Game.tap_damage())]
+		_set_buy_face(_klinok_w.cost, Game.tap_cost_n(max(1, tn)), max(1, tn))
+		_set_buy_disabled(_klinok_w.cost, Economy.gold < Game.tap_cost_n(max(1, tn)))
 
+	_sync_buy_widths()
 	_refresh_prestige()
+	_refresh_tabs()
 	_maybe_prestige_intro()
 
 
@@ -1386,11 +2249,30 @@ func _process(delta: float) -> void:
 			_displayed_bells_top = float(Economy.bells)
 		_bells_label.text = "%d" % int(round(_displayed_bells_top))
 
-	# ролловер афиши в полночь mid-session: без автопопапа, только бейдж-пульс
+	_tick_buy_prices(delta)
+
+	# афиша: таймер каждую секунду; ролловер дня — раз в 30с
+	_afisha_tick_t += delta
+	if _afisha_tick_t >= 1.0:
+		_afisha_tick_t = 0.0
+		if not _side_afisha.is_empty() and bool(_side_afisha.get("shown", false)):
+			_refresh_daily_btn()
+		if is_instance_valid(_daily_panel) and _daily_panel.visible:
+			_refresh_daily_footer()
 	_daily_check_t += delta
 	if _daily_check_t >= 30.0:
 		_daily_check_t = 0.0
 		_refresh_daily_btn()
+		if is_instance_valid(_daily_panel) and _daily_panel.visible:
+			_refresh_daily()
+
+	# Клад: мягкий idle-пульс (как ×2) + редкий акцент; без тостов в цикле
+	_side_klad_idle_sync()
+	_klad_nudge_t += delta
+	if _klad_nudge_t >= KLAD_NUDGE_GAP:
+		_klad_nudge_t = randf_range(0.0, 6.0)
+		if not _ui_modal_busy() and not (_tut_step >= 0) and not _klad_watched_session:
+			_side_klad_nudge()
 
 	_process_punk(delta)
 	_process_parallax(delta)
@@ -1535,14 +2417,14 @@ func _process_parallax(delta: float) -> void:
 # --- Барки труппы + док-стаб «Скоро» -----------------------------------------
 func _build_barks() -> void:
 	_bark_layer = CanvasLayer.new()
-	_bark_layer.layer = 45   # выше игры, ниже модалок; не блокирует
+	_bark_layer.layer = UI_Z_BARK   # выше игры, ниже модалок; не блокирует
 	add_child(_bark_layer)
-	# Полоса над PunkSlot (тот на -500…-436); низ полосы -522 → ~22 px зазор
+	# Полоса над нижним доком: низ всегда на BARK_GAP над DockPlate
 	_bark_wrap = Control.new()
 	_bark_wrap.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	_bark_wrap.offset_top = -622.0
-	_bark_wrap.offset_bottom = -522.0
-	_bark_wrap.clip_contents = true
+	_bark_wrap.offset_top = DOCK_TOP - BARK_GAP - BARK_STRIP_H
+	_bark_wrap.offset_bottom = DOCK_TOP - BARK_GAP
+	_bark_wrap.clip_contents = false
 	_bark_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bark_layer.add_child(_bark_wrap)
 	_bark_box = PanelContainer.new()
@@ -1552,25 +2434,24 @@ func _build_barks() -> void:
 	_bark_wrap.add_child(_bark_box)
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 12)
+	hb.alignment = BoxContainer.ALIGNMENT_CENTER
 	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bark_box.add_child(hb)
-	_bark_ring = Panel.new()   # кольцо-акцент вокруг круглого портрета
-	_bark_ring.custom_minimum_size = Vector2(62, 62)
+	_bark_ring = Panel.new()   # скруглённый слот — полный портрет без circular-crop
+	_bark_ring.custom_minimum_size = Vector2(BARK_PORT, BARK_PORT)
 	_bark_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_bark_ring.add_theme_stylebox_override("panel", _flat(GOLD, GOLD, 999, 0, 0))
+	_bark_ring.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_bark_ring.clip_contents = true
+	_bark_ring.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, SURF_BORDER, 14, 2, 0))
 	hb.add_child(_bark_ring)
 	_bark_portrait = TextureRect.new()
 	_bark_portrait.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_bark_portrait.offset_left = 3; _bark_portrait.offset_top = 3
 	_bark_portrait.offset_right = -3; _bark_portrait.offset_bottom = -3
 	_bark_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_bark_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_bark_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_bark_portrait.texture_filter = TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_bark_portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var sh := Shader.new()   # круговая маска портрета
-	sh.code = "shader_type canvas_item;\nvoid fragment(){ vec2 c = UV - vec2(0.5); if (dot(c, c) > 0.25) discard; COLOR = texture(TEXTURE, UV); }\n"
-	var mat := ShaderMaterial.new()
-	mat.shader = sh
-	_bark_portrait.material = mat
 	_bark_ring.add_child(_bark_portrait)
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 2)
@@ -1595,19 +2476,127 @@ func _build_barks() -> void:
 func _apply_bark_layout(bd: float) -> void:
 	if not is_instance_valid(_bark_wrap):
 		return
-	const GAP := 22.0
-	const H := 100.0
-	var punk_top: float = -500.0 - bd
-	_bark_wrap.offset_bottom = punk_top - GAP
-	_bark_wrap.offset_top = punk_top - GAP - H
+	# низ полосы = верх DockPlate − фиксированный зазор; высота с запасом под 2 строки
+	var dock_top: float = DOCK_TOP - bd
+	_bark_wrap.offset_bottom = dock_top - BARK_GAP
+	_bark_wrap.offset_top = dock_top - BARK_GAP - BARK_STRIP_H
+
+
+func _build_combo_hud() -> void:
+	_combo_layer = CanvasLayer.new()
+	_combo_layer.layer = UI_Z_BARK - 1
+	_combo_layer.name = "ComboLayer"
+	add_child(_combo_layer)
+	_combo_root = Control.new()
+	_combo_root.name = "ComboHud"
+	_combo_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_combo_root.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_combo_root.custom_minimum_size = Vector2(COMBO_HUD_W, COMBO_HUD_H)
+	_combo_root.visible = false
+	_combo_root.modulate.a = 0.0
+	_combo_layer.add_child(_combo_root)
+	var vb := VBoxContainer.new()
+	vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vb.alignment = BoxContainer.ALIGNMENT_END
+	vb.add_theme_constant_override("separation", -6)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_combo_root.add_child(vb)
+	# A: КОМБО! → хиты → УРОН ×N
+	_combo_title_lbl = Label.new()
+	_combo_title_lbl.text = "КОМБО!"
+	_combo_title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_combo_title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _header_font:
+		_combo_title_lbl.add_theme_font_override("font", _header_font)
+	_lab(_combo_title_lbl, COMBO_F_TITLE, GOLD)
+	vb.add_child(_combo_title_lbl)
+	_combo_hits_lbl = Label.new()
+	_combo_hits_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_combo_hits_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _header_font:
+		_combo_hits_lbl.add_theme_font_override("font", _header_font)
+	_lab(_combo_hits_lbl, COMBO_F_HITS, GOLD)
+	vb.add_child(_combo_hits_lbl)
+	_combo_mult_lbl = Label.new()
+	_combo_mult_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_combo_mult_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _header_font:
+		_combo_mult_lbl.add_theme_font_override("font", _header_font)
+	_lab(_combo_mult_lbl, COMBO_F_MULT, TXT)
+	vb.add_child(_combo_mult_lbl)
+	_apply_combo_layout(0.0)
+
+
+func _apply_combo_layout(bd: float) -> void:
+	if not is_instance_valid(_combo_root):
+		return
+	# Над полосой барков, левый край — не пересекается с барк-боксом по центру.
+	var dock_top: float = DOCK_TOP - bd
+	var bark_top: float = dock_top - BARK_GAP - BARK_STRIP_H
+	_combo_root.offset_left = 14.0
+	_combo_root.offset_right = 14.0 + COMBO_HUD_W
+	_combo_root.offset_bottom = bark_top - COMBO_GAP_ABOVE_BARK
+	_combo_root.offset_top = _combo_root.offset_bottom - COMBO_HUD_H
+	_combo_root.pivot_offset = Vector2(COMBO_HUD_W * 0.3, COMBO_HUD_H * 0.75)
+
+
+func _on_combo_changed(hits: int, mult: float, tier_up: bool) -> void:
+	if Game.store_shot_mode:
+		return
+	if not is_instance_valid(_combo_root):
+		return
+	var show: bool = hits >= int(Balance.COMBO_TIER_HITS[0])
+	if not show:
+		if _combo_shown:
+			_combo_hide_anim()
+		return
+	_combo_hits_lbl.text = str(hits)
+	_combo_mult_lbl.text = "УРОН ×%.1f" % mult
+	_combo_mult_lbl.add_theme_color_override("font_color", GOLD if mult >= 1.4 else TXT)
+	if not _combo_shown:
+		_combo_shown = true
+		_combo_root.visible = true
+		_combo_root.modulate.a = 0.0
+		_combo_root.scale = Vector2(0.82, 0.82)
+	if _combo_tw and _combo_tw.is_valid():
+		_combo_tw.kill()
+	_combo_tw = create_tween()
+	_combo_tw.set_parallel(true)
+	_combo_tw.tween_property(_combo_root, "modulate:a", 1.0, 0.08)
+	# Чуть скромнее punch — блок уже из 3 строк
+	var peak: float = 1.16 if tier_up else 1.08
+	_combo_root.scale = Vector2(peak, peak)
+	_combo_tw.tween_property(_combo_root, "scale", Vector2.ONE, 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	if tier_up and is_instance_valid(_combo_title_lbl):
+		_combo_title_lbl.pivot_offset = _combo_title_lbl.size * 0.5
+		_combo_title_lbl.scale = Vector2(1.18, 1.18)
+		_combo_tw.tween_property(_combo_title_lbl, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func _combo_hide_anim() -> void:
+	_combo_shown = false
+	if not is_instance_valid(_combo_root):
+		return
+	if _combo_tw and _combo_tw.is_valid():
+		_combo_tw.kill()
+	_combo_tw = create_tween()
+	_combo_tw.set_parallel(true)
+	_combo_tw.tween_property(_combo_root, "modulate:a", 0.0, 0.22)
+	_combo_tw.tween_property(_combo_root, "scale", Vector2(0.85, 0.85), 0.22)
+	_combo_tw.chain().tween_callback(func():
+		if is_instance_valid(_combo_root) and not _combo_shown:
+			_combo_root.visible = false
+	)
 
 
 func _bark_prep_layout() -> void:
 	if not is_instance_valid(_bark_text) or not is_instance_valid(_bark_wrap):
 		return
 	var rail_w: float = maxf(_bark_wrap.size.x, get_viewport().get_visible_rect().size.x)
-	var text_w: float = maxf(240.0, rail_w - 100.0)
+	var text_w: float = maxf(240.0, rail_w - (BARK_PORT + 56.0))
 	_bark_text.custom_minimum_size.x = text_w
+	if is_instance_valid(_bark_box):
+		_bark_box.reset_size()
 
 
 func _bark_rest_x() -> float:
@@ -1618,14 +2607,44 @@ func _bark_rest_x() -> float:
 
 
 func _bark_rest_y() -> float:
+	# низ барка всегда на полу полосы → одинаковый зазор до плашки при 1 и 2 строках
 	if not is_instance_valid(_bark_wrap) or not is_instance_valid(_bark_box):
 		return 0.0
-	return maxf(0.0, (_bark_wrap.size.y - _bark_box.size.y) * 0.5)
+	return maxf(0.0, _bark_wrap.size.y - _bark_box.size.y)
+
+func _ui_modal_busy() -> bool:
+	# любая блокирующая модалка — барки молчат и прячутся
+	if is_instance_valid(_daily_panel) and _daily_panel.visible:
+		return true
+	if is_instance_valid(_settings_panel) and _settings_panel.visible:
+		return true
+	if is_instance_valid(_prestige_panel) and _prestige_panel.visible:
+		return true
+	if is_instance_valid(_offline_root):
+		return true
+	if is_instance_valid(_boss_offer):
+		return true
+	if is_instance_valid(_char_layer):
+		return true
+	if is_instance_valid(_review_panel) and _review_panel.visible:
+		return true
+	return false
+
+func _bark_hide_for_modal() -> void:
+	if not is_instance_valid(_bark_box):
+		return
+	if _bark_tw and _bark_tw.is_valid():
+		_bark_tw.kill()
+	_bark_box.visible = false
 
 func _bark_tick(delta: float) -> void:
 	if Game.store_shot_mode:
 		return
 	if not is_instance_valid(_bark_box):
+		return
+	if _ui_modal_busy():
+		if _bark_box.visible:
+			_bark_hide_for_modal()
 		return
 	_bark_intro_scan()
 	if _tut_step >= 0:
@@ -1694,10 +2713,14 @@ func _bark_event(kind: String) -> void:
 func _bark_show(hid: String, line: String, freeze: bool = false) -> void:
 	if not is_instance_valid(_bark_box) or line == "":
 		return
+	if _ui_modal_busy() and not freeze:
+		return
 	var col: Color = ALLY_COLORS.get(hid, GOLD)
-	_bark_ring.add_theme_stylebox_override("panel", _flat(col, col, 999, 0, 0))
+	_bark_ring.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, col, 14, 2, 0))
 	if _ally_tex.has(hid):
 		_bark_portrait.texture = _ally_tex[hid]
+	if is_instance_valid(_bark_wrap):
+		_bark_wrap.set_meta("hero_id", hid)
 	_bark_name.text = String(Game.ALLIES.get(hid, {}).get("name", ""))
 	_bark_name.add_theme_color_override("font_color", col)
 	_bark_text.text = line
@@ -1782,7 +2805,7 @@ func _build_dock_stub() -> void:
 # --- Босс: телеграф / победа / поражение -------------------------------------
 func _build_boss_ui() -> void:
 	_boss_layer = CanvasLayer.new()
-	_boss_layer.layer = 55
+	_boss_layer.layer = UI_Z_MODAL
 	_boss_layer.process_mode = Node.PROCESS_MODE_ALWAYS   # работает в паузе/слоумо
 	add_child(_boss_layer)
 
@@ -1802,6 +2825,9 @@ func _boss_telegraph() -> void:
 	var l := Label.new()
 	l.text = "БОСС!"
 	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Верхняя треть экрана — не пересекается с комбо (низ-лево) и доком
+	l.offset_top = 120.0
+	l.offset_bottom = -420.0
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	l.add_theme_font_size_override("font_size", 130)
@@ -1833,6 +2859,8 @@ func _boss_beat(title: String, subtitle: String, col: Color) -> void:
 	Engine.time_scale = 0.40
 	var holder := Control.new()
 	holder.set_anchors_preset(Control.PRESET_FULL_RECT)
+	holder.offset_top = 100.0
+	holder.offset_bottom = -380.0
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_boss_layer.add_child(holder)
 	_boss_banner = holder
@@ -1877,13 +2905,24 @@ func _on_boss_won() -> void:
 	if not _first_boss_reported:
 		_first_boss_reported = true
 		Analytics.report("first_boss_win", {"stage": Game.stage})
-	_maybe_ask_review()
+	# «Оцените» — после 3-го босса (см. _maybe_ask_review)
 	_fail_count = 0            # босс повержен — счётчик провалов сброшен
 	_last_fail_stage = -1
 	var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
 	_fly_coins(_global_center(_enemy), _global_center(_gold_label), 20, GOLD, _gold_tex, _gold_icon)
 	_boss_beat("БОСС ПОВЕРЖЕН!", "→ %s · стадия %d" % [loc, Game.stage], GOLD)
-	_maybe_daily_intro()       # первое знакомство с афишей — на волне победы
+	_boss_wins += 1
+	_session_boss_wins += 1
+	_save_settings()
+	if _boss_wins == 1:
+		_unlock_daily_sidebar()
+		# клад-хинт после первого босса, не сразу после тутора
+		get_tree().create_timer(10.0, true, false, true).timeout.connect(_maybe_klad_hint)
+	elif _boss_wins == 2:
+		_maybe_daily_auto_modal()   # авто-афиша со 2-го босса
+	# оценка: 3-й босс жизни / повтор — только пока ещё можно показать
+	if not _review_done and _review_attempts < 2:
+		get_tree().create_timer(5.0, true, false, true).timeout.connect(_maybe_ask_review)
 
 func _on_boss_failed() -> void:
 	get_tree().paused = true
@@ -1899,6 +2938,8 @@ func _on_boss_bells_awarded(amount: int) -> void:
 func _show_boss_offer() -> void:
 	if not is_instance_valid(_boss_layer):
 		return
+	_bark_hide_for_modal()
+	_side_set_input_blocked(true)
 	if is_instance_valid(_boss_offer):
 		_boss_offer.queue_free()
 	_boss_offer = null
@@ -1915,8 +2956,8 @@ func _show_boss_offer() -> void:
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_boss_offer.add_child(cc)
 	var box := PanelContainer.new()
-	box.add_theme_stylebox_override("panel", _flat(DARK, BLOOD, 20, 2, 26))
-	box.custom_minimum_size = Vector2(560, 0)
+	box.add_theme_stylebox_override("panel", _flat(DARK, BLOOD, 20, 2, UI_MODAL_PAD))
+	box.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
 	cc.add_child(box)
 	_boss_offer_box = box
 	var vb := VBoxContainer.new()
@@ -1947,6 +2988,7 @@ func _close_boss_offer() -> void:
 		_pop_close_free(_boss_offer, _boss_offer_box)
 	_boss_offer = null
 	_boss_offer_box = null
+	_side_set_input_blocked(false)
 
 func _boss_watch_ad() -> void:
 	_close_boss_offer()
@@ -1972,58 +3014,104 @@ func _apply_boss_loss() -> void:
 		_show_prestige_nudge.call_deferred()
 
 func _show_prestige_nudge() -> void:
-	if not (is_instance_valid(_prestige_btn) and is_instance_valid(_fx)):
+	var target: Control = _tab_btns.get("tale") as Control
+	if not is_instance_valid(target):
+		target = _prestige_btn
+	if not (is_instance_valid(target) and is_instance_valid(_fx)):
 		return
-	_dismiss_prestige_nudge()
+	_dismiss_prestige_nudge(false)   # замена — без анимации
 	_nudge = PanelContainer.new()
 	_nudge.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 12, 2, 12))
 	_nudge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_nudge.modulate.a = 0.0          # поп после _place
+	_nudge.process_mode = Node.PROCESS_MODE_ALWAYS  # поп-закрытие при паузе модалки
 	_fx.add_child(_nudge)
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 0)
+	vb.add_theme_constant_override("separation", 4)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_nudge.add_child(vb)
-	var invest: bool = _has_affordable_upgrade()   # есть на что тратить → зови в дерево
+	var invest: bool = _has_affordable_upgrade()
 	var t := Label.new()
 	t.text = "Не получается пройти? Вложи" if invest else "Уперся? Начни"
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(t, F_SMALL, MUTED)
+	_lab(t, F_BODY, MUTED)
 	vb.add_child(t)
 	var t2 := Label.new()
-	t2.text = "▲ Черепа в силу!" if invest else "▲ Новую Сказку!"
+	t2.text = "Черепа в силу!" if invest else "Новую Сказку!"
 	t2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(t2, F_SUB, GOLD)
+	_lab(t2, F_TITLE, GOLD)
 	if _header_font: t2.add_theme_font_override("font", _header_font)
-	vb.add_child(t2)
-	# под кнопкой «Новая сказка»
-	var bp: Vector2 = _prestige_btn.global_position
-	_nudge.position = bp + Vector2(-14, _prestige_btn.size.y + 8)
-	# пульс баббла (привязан к бабблу → умрёт с ним)
-	_nudge.pivot_offset = Vector2(60, 20)
-	var bt := _nudge.create_tween().set_loops()
-	bt.tween_property(_nudge, "scale", Vector2(1.06, 1.06), 0.5).set_trans(Tween.TRANS_SINE)
-	bt.tween_property(_nudge, "scale", Vector2.ONE, 0.5).set_trans(Tween.TRANS_SINE)
-	# золотой пульс самой кнопки (привязан к кнопке; глушим в _dismiss)
-	_nudge_tw = _prestige_btn.create_tween().set_loops()
-	_nudge_tw.tween_property(_prestige_btn, "modulate", Color(1.5, 1.3, 0.7), 0.5).set_trans(Tween.TRANS_SINE)
-	_nudge_tw.tween_property(_prestige_btn, "modulate", Color(1, 1, 1), 0.5).set_trans(Tween.TRANS_SINE)
-	get_tree().create_timer(7.0).timeout.connect(_dismiss_prestige_nudge)
+	if invest and _skull_tex:
+		var row := HBoxContainer.new()
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.add_theme_constant_override("separation", 8)
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(_skull_icon(40))
+		row.add_child(t2)
+		vb.add_child(row)
+	else:
+		vb.add_child(t2)
+	_place_prestige_nudge.call_deferred(target)
+	_nudge_tw = target.create_tween().set_loops()
+	_nudge_tw.tween_property(target, "modulate", Color(1.5, 1.3, 0.7), 0.5).set_trans(Tween.TRANS_SINE)
+	_nudge_tw.tween_property(target, "modulate", Color(1, 1, 1), 0.5).set_trans(Tween.TRANS_SINE)
+	get_tree().create_timer(7.0).timeout.connect(_dismiss_prestige_nudge.bind(true))
 
-func _dismiss_prestige_nudge() -> void:
+
+func _place_prestige_nudge(target: Control) -> void:
+	if not is_instance_valid(_nudge) or not is_instance_valid(target) or not is_instance_valid(_fx):
+		return
+	_nudge.reset_size()
+	var nw: float = maxf(_nudge.size.x, _nudge.get_combined_minimum_size().x)
+	var nh: float = maxf(_nudge.size.y, _nudge.get_combined_minimum_size().y)
+	if nw < 24.0:
+		nw = 280.0
+		nh = maxf(nh, 56.0)
+	var view: Rect2 = get_viewport().get_visible_rect()
+	var pad: float = UI_CHROME
+	var tab: Rect2 = Rect2(target.global_position, target.size)
+	var x: float = tab.position.x + tab.size.x - nw
+	x = clampf(x, view.position.x + pad, view.position.x + view.size.x - pad - nw)
+	var y: float = tab.position.y - nh - 8.0
+	y = maxf(view.position.y + pad, y)
+	_nudge.global_position = Vector2(x, y)
+	# Поп после раскладки (размер → pivot).
+	_nudge.modulate.a = 0.0
+	_nudge.pivot_offset = Vector2(nw, nh) * 0.5
+	_nudge.scale = Vector2(0.72, 0.72)
+	var ot := _nudge.create_tween().set_parallel(true)
+	ot.tween_property(_nudge, "modulate:a", 1.0, 0.12)
+	ot.tween_property(_nudge, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func _dismiss_prestige_nudge(animated: bool = false) -> void:
 	if _nudge_tw and _nudge_tw.is_valid():
 		_nudge_tw.kill()
 	_nudge_tw = null
 	if is_instance_valid(_prestige_btn):
 		_prestige_btn.modulate = Color(1, 1, 1)
-	if is_instance_valid(_nudge):
-		_nudge.queue_free()
+	_refresh_tabs()
+	if not is_instance_valid(_nudge):
+		_nudge = null
+		_refresh_tabs()
+		return
+	var box: Control = _nudge
 	_nudge = null
+	if animated and box.is_inside_tree():
+		box.pivot_offset = box.size * 0.5
+		var t := box.create_tween().set_parallel(true)
+		t.tween_property(box, "modulate:a", 0.0, 0.12)
+		t.tween_property(box, "scale", Vector2(0.72, 0.72), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+		t.chain().tween_callback(func():
+			if is_instance_valid(box): box.queue_free())
+	else:
+		box.queue_free()
+	_refresh_tabs()
 
 # Полноэкранный фейд-в-чёрное: mid вызывается на пике темноты (там меняем стейт).
 func _fade_transition(mid: Callable, caption: String = "", caption_col: Color = BLOOD) -> void:
 	if _fade_rect == null:
 		_fade_layer = CanvasLayer.new()
-		_fade_layer.layer = 95   # выше всех окон (кроме лоадскрина 100)
+		_fade_layer.layer = UI_Z_FADE
 		_fade_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 		add_child(_fade_layer)
 		_fade_rect = ColorRect.new()
@@ -2086,28 +3174,14 @@ func _build_prestige() -> void:
 	_prestige_btn.focus_mode = Control.FOCUS_NONE
 	_prestige_btn.add_theme_font_size_override("font_size", F_SMALL)
 	_prestige_btn.text = "Новая\nсказка"
-	_style_button(_prestige_btn, WOOD, WOOD_BORDER, GOLD)
+	_btn_hud(_prestige_btn, "primary")
 	_prestige_btn.pressed.connect(_open_prestige)
-	if is_instance_valid(_arena):   # в арену слева, напротив Клада
+	if is_instance_valid(_arena):
 		_arena.add_child(_prestige_btn)
 		_prestige_btn.set_anchors_preset(Control.PRESET_TOP_LEFT)
 		_prestige_btn.position = Vector2(12, 80)
 		_prestige_btn.size = Vector2(96, 50)
-	# Реклама «×2 урон этому боссу» — справа под «Кладом», видна только на боссе
-	_boss_ad_btn = Button.new()
-	_boss_ad_btn.text = "▶ ×2 урон"
-	_boss_ad_btn.add_theme_font_size_override("font_size", F_SMALL)
-	_boss_ad_btn.focus_mode = Control.FOCUS_NONE
-	_style_button(_boss_ad_btn, Color("#2a0f14"), BLOOD, Color("#ff5a4f"))
-	_boss_ad_btn.visible = false
-	_boss_ad_btn.pressed.connect(_on_boss_ad_pressed)
-	if is_instance_valid(_arena):
-		_arena.add_child(_boss_ad_btn)
-		_boss_ad_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-		_boss_ad_btn.offset_left = -104
-		_boss_ad_btn.offset_top = 136
-		_boss_ad_btn.offset_right = -12
-		_boss_ad_btn.offset_bottom = 184
+		_prestige_btn.visible = false   # дом — вкладка Сказка
 	_build_prestige_panel()
 	_refresh_prestige()
 
@@ -2118,7 +3192,7 @@ func _on_boss_ad_pressed() -> void:
 
 func _build_prestige_panel() -> void:
 	_prestige_layer = CanvasLayer.new()
-	_prestige_layer.layer = 58
+	_prestige_layer.layer = UI_Z_MODAL
 	_prestige_layer.process_mode = Node.PROCESS_MODE_ALWAYS   # работает в паузе
 	add_child(_prestige_layer)
 	_prestige_panel = Control.new()
@@ -2129,7 +3203,7 @@ func _build_prestige_panel() -> void:
 	dim.color = Color(0, 0, 0, 0.7)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.gui_input.connect(func(e: InputEvent):
-		if e is InputEventMouseButton and e.pressed and _prestige_lock <= 0:
+		if e is InputEventMouseButton and e.pressed and _prestige_can_dismiss():
 			_close_prestige())
 	_prestige_panel.add_child(dim)
 	var cc := CenterContainer.new()
@@ -2137,35 +3211,61 @@ func _build_prestige_panel() -> void:
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_prestige_panel.add_child(cc)
 	var box := PanelContainer.new()
-	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 20, 2, 24))
-	box.custom_minimum_size = Vector2(560, 0)   # влезает в 720 с полями
+	box.clip_contents = false
+	box.add_theme_stylebox_override("panel", _ui_modal_flat())
+	box.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
 	cc.add_child(box)
 	_prestige_box = box
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 10)
+	vb.clip_contents = false
 	box.add_child(vb)
 
-	var title := Label.new()
-	title.text = "Новая Сказка"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(title, F_TITLE, GOLD)
-	if _header_font: title.add_theme_font_override("font", _header_font)
-	vb.add_child(title)
+	var head := _ui_modal_title_bar("Новая Сказка", _close_prestige)
+	_prestige_step1_close = head["close"]
+	vb.add_child(head["root"])
+
+	var have := HBoxContainer.new()
+	have.alignment = BoxContainer.ALIGNMENT_CENTER
+	have.add_theme_constant_override("separation", 8)
+	var have_pref := Label.new()
+	have_pref.text = "У тебя"
+	_lab(have_pref, F_BODY, TXT)
+	have_pref.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	have.add_child(have_pref)
+	_prestige_s1_count = Label.new()
+	_lab(_prestige_s1_count, F_TITLE, Color("#cdbfd6"))
+	if _header_font: _prestige_s1_count.add_theme_font_override("font", _header_font)
+	have.add_child(_prestige_s1_count)
+	_prestige_s2_icon = _skull_icon(34)
+	have.add_child(_prestige_s2_icon)
+	_prestige_s1_word = Label.new()
+	_lab(_prestige_s1_word, F_TITLE, Color("#cdbfd6"))
+	if _header_font: _prestige_s1_word.add_theme_font_override("font", _header_font)
+	have.add_child(_prestige_s1_word)
+	vb.add_child(have)
 
 	# ========== ШАГ 1: стоит ли сбрасываться ==========
 	_prestige_step1 = VBoxContainer.new()
 	_prestige_step1.add_theme_constant_override("separation", 12)
 	vb.add_child(_prestige_step1)
 
-	var s1row := HBoxContainer.new()
-	s1row.alignment = BoxContainer.ALIGNMENT_CENTER
-	s1row.add_theme_constant_override("separation", 8)
-	s1row.add_child(_skull_icon(34))
-	_prestige_s1_count = Label.new()
-	_lab(_prestige_s1_count, F_TITLE, Color("#cdbfd6"))
-	if _header_font: _prestige_s1_count.add_theme_font_override("font", _header_font)
-	s1row.add_child(_prestige_s1_count)
-	_prestige_step1.add_child(s1row)
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 14)
+	_prestige_step1.add_child(body)
+	for line in [
+		"Черепа выпадают с Боссов.",
+		"Начни Новую Сказку и потрать Черепа на вечные усиления.",
+		"Твой прогресс, золото и прокачка героев сбросятся, но вечные усиления останутся навсегда и ты пройдёшь ещё дальше!",
+		"ХОЙ!",
+	]:
+		var p := Label.new()
+		p.text = line
+		p.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		p.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		p.custom_minimum_size = Vector2(1, 0)
+		_lab(p, F_SUB, TXT)
+		body.add_child(p)
 
 	_prestige_pending_lbl = Label.new()
 	_prestige_pending_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2174,36 +3274,29 @@ func _build_prestige_panel() -> void:
 	_lab(_prestige_pending_lbl, F_BODY, GOLD)
 	_prestige_step1.add_child(_prestige_pending_lbl)
 
-	var keep := Label.new()
-	keep.text = "Черепа выпадают с Боссов. «Новая Сказка» начнёт забег заново: золото, герои и стадия сбросятся, а Черепа и Вечные Усиления останутся навсегда — и ты пройдёшь дальше прежнего."
-	keep.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	keep.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_lab(keep, F_SMALL, TXT)
-	_prestige_step1.add_child(keep)
+	_prestige_gain_row = HBoxContainer.new()
+	_prestige_gain_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_prestige_gain_row.add_theme_constant_override("separation", 8)
+	_prestige_gain_n = Label.new()
+	_lab(_prestige_gain_n, F_TITLE, Color("#cdbfd6"))
+	if _header_font: _prestige_gain_n.add_theme_font_override("font", _header_font)
+	_prestige_gain_row.add_child(_prestige_gain_n)
+	_prestige_gain_row.add_child(_skull_icon(34))
+	_prestige_gain_word = Label.new()
+	_lab(_prestige_gain_word, F_TITLE, Color("#cdbfd6"))
+	if _header_font: _prestige_gain_word.add_theme_font_override("font", _header_font)
+	_prestige_gain_row.add_child(_prestige_gain_word)
+	_prestige_step1.add_child(_prestige_gain_row)
 
 	_prestige_step1_go = _settings_button("Новая сказка", WOOD, true)
 	_prestige_step1_go.pressed.connect(_prestige_goto_step2)
 	_prestige_step1.add_child(_prestige_step1_go)
-	_prestige_step1_close = _settings_button("Закрыть", SURF, false)
-	_prestige_step1_close.pressed.connect(_close_prestige)
-	_prestige_step1.add_child(_prestige_step1_close)
 
 	# ========== ШАГ 2: распределение черепов ==========
 	_prestige_step2 = VBoxContainer.new()
 	_prestige_step2.add_theme_constant_override("separation", 8)
 	_prestige_step2.visible = false
 	vb.add_child(_prestige_step2)
-
-	var s2row := HBoxContainer.new()
-	s2row.alignment = BoxContainer.ALIGNMENT_CENTER
-	s2row.add_theme_constant_override("separation", 8)
-	_prestige_s2_icon = _skull_icon(30)
-	s2row.add_child(_prestige_s2_icon)
-	_prestige_bells_lbl = Label.new()
-	_lab(_prestige_bells_lbl, F_TITLE, Color("#cdbfd6"))
-	if _header_font: _prestige_bells_lbl.add_theme_font_override("font", _header_font)
-	s2row.add_child(_prestige_bells_lbl)
-	_prestige_step2.add_child(s2row)
 
 	var hint2 := Label.new()
 	hint2.text = "Вложи Черепа в Вечные Усиления."
@@ -2232,7 +3325,7 @@ func _build_prestige_panel() -> void:
 func _prestige_row(id: String) -> Control:
 	var n: Dictionary = Balance.PRESTIGE_NODES[id]
 	var row := PanelContainer.new()
-	row.add_theme_stylebox_override("panel", _flat(SURF, SURF, 12, 0, 12))
+	row.add_theme_stylebox_override("panel", _row_panel(SURF_BORDER, false))
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 10)
 	row.add_child(hb)
@@ -2248,24 +3341,135 @@ func _prestige_row(id: String) -> Control:
 	var desc := Label.new()
 	desc.text = String(n.desc)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.custom_minimum_size = Vector2(1, 0)
 	_lab(desc, F_SMALL, MUTED)
 	info.add_child(desc)
 	var lvl := Label.new()
-	lvl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART   # не распирать строку уровнем
+	lvl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lvl.custom_minimum_size = Vector2(1, 0)
 	_lab(lvl, F_SMALL, TXT)
 	info.add_child(lvl)
-	var btn := Button.new()
-	btn.focus_mode = Control.FOCUS_NONE
-	btn.custom_minimum_size = Vector2(120, 56)
-	btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	btn.add_theme_font_size_override("font_size", F_SUB)
-	btn.add_theme_constant_override("icon_max_width", 22)   # ужать иконку черепа
-	_style_button(btn, WOOD, WOOD_BORDER, GOLD)
+	var btn := _meta_cost_btn()
 	btn.pressed.connect(_on_prestige_node.bind(id))
 	hb.add_child(btn)
 	_prestige_rows[id] = {"level": lvl, "btn": btn, "row": row}
 	return row
+
+func _meta_cost_btn() -> Button:
+	var cost := Button.new()
+	cost.add_theme_font_size_override("font_size", F_SUB)
+	cost.custom_minimum_size = Vector2(88, 56)
+	cost.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	cost.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cost.focus_mode = Control.FOCUS_NONE
+	cost.text = ""
+	cost.clip_contents = true
+	_btn_hud(cost, "primary")
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 6)
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.offset_left = 8
+	row.offset_right = -8
+	var price_l := Label.new()
+	_lab(price_l, F_SUB, GOLD)
+	price_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ic := TextureRect.new()
+	ic.texture = _skull_tex
+	ic.custom_minimum_size = Vector2(22, 22)
+	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ic.visible = _skull_tex != null
+	row.add_child(price_l)
+	row.add_child(ic)
+	cost.add_child(row)
+	cost.set_meta("price_l", price_l)
+	cost.set_meta("skull_ic", ic)
+	return cost
+
+func _fit_meta_btn(btn: Button) -> void:
+	if not is_instance_valid(btn) or not btn.has_meta("price_l"):
+		return
+	var price_l: Label = btn.get_meta("price_l")
+	var need: float = 24.0
+	var s: String = price_l.text if is_instance_valid(price_l) else ""
+	if btn.has_meta("price_target"):
+		var ts := "%d" % int(float(btn.get_meta("price_target")))
+		if _string_w(price_l, ts) > _string_w(price_l, s):
+			s = ts
+	need += _string_w(price_l, s)
+	var ic: TextureRect = btn.get_meta("skull_ic") as TextureRect
+	if is_instance_valid(ic) and ic.visible:
+		need += 28.0
+	btn.custom_minimum_size.x = maxf(88.0, need)
+
+func _set_meta_face(btn: Button, cost: int) -> void:
+	if not is_instance_valid(btn) or not btn.has_meta("price_l"):
+		return
+	var price_l: Label = btn.get_meta("price_l")
+	var ic: TextureRect = btn.get_meta("skull_ic") as TextureRect
+	if cost < 0:
+		_kill_meta_roll(btn)
+		btn.remove_meta("price_target")
+		btn.remove_meta("price_shown")
+		price_l.text = "МАКС"
+		if is_instance_valid(ic):
+			ic.visible = false
+		btn.disabled = true
+		_fit_meta_btn(btn)
+		return
+	if is_instance_valid(ic):
+		ic.visible = _skull_tex != null
+	btn.disabled = Economy.bells < cost
+	var target: float = float(cost)
+	btn.set_meta("price_target", target)
+	if not btn.has_meta("price_shown"):
+		btn.set_meta("price_shown", target)
+		price_l.text = "%d" % cost
+		_fit_meta_btn(btn)
+		return
+	var shown: float = float(btn.get_meta("price_shown"))
+	if abs(shown - target) < 0.5:
+		btn.set_meta("price_shown", target)
+		price_l.text = "%d" % cost
+	else:
+		_start_meta_roll(btn, shown, target)
+	_fit_meta_btn(btn)
+
+func _kill_meta_roll(btn: Button) -> void:
+	if not is_instance_valid(btn) or not btn.has_meta("roll_tw"):
+		return
+	var tw: Tween = btn.get_meta("roll_tw")
+	if tw and tw.is_valid():
+		tw.kill()
+	btn.remove_meta("roll_tw")
+
+func _start_meta_roll(btn: Button, from_v: float, to_v: float) -> void:
+	_kill_meta_roll(btn)
+	if not is_instance_valid(_prestige_panel):
+		btn.set_meta("price_shown", to_v)
+		var price_l: Label = btn.get_meta("price_l")
+		if is_instance_valid(price_l):
+			price_l.text = "%d" % int(round(to_v))
+		return
+	var tw := _prestige_panel.create_tween()
+	btn.set_meta("roll_tw", tw)
+	tw.tween_method(func(v: float):
+		if not is_instance_valid(btn) or not btn.has_meta("price_l"):
+			return
+		btn.set_meta("price_shown", v)
+		var price_l: Label = btn.get_meta("price_l")
+		price_l.text = "%d" % int(round(v))
+	, from_v, to_v, BUY_ROLL_DUR).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.finished.connect(func():
+		if not is_instance_valid(btn) or not btn.has_meta("price_l"):
+			return
+		btn.set_meta("price_shown", to_v)
+		var price_l: Label = btn.get_meta("price_l")
+		price_l.text = "%d" % int(round(to_v)))
 
 func _fmt_mult(v: float) -> String:
 	var s := "%.2f" % v
@@ -2274,6 +3478,37 @@ func _fmt_mult(v: float) -> String:
 	if s.ends_with("."):
 		s = s.left(s.length() - 1)
 	return s
+
+func _skull_word(n: int, cap: bool = true) -> String:
+	var a: int = absi(n) % 100
+	var d: int = a % 10
+	var w: String = "черепов"
+	if a >= 11 and a <= 14:
+		w = "черепов"
+	elif d == 1:
+		w = "череп"
+	elif d >= 2 and d <= 4:
+		w = "черепа"
+	if cap:
+		return w.capitalize()
+	return w
+
+func _left_verb(n: int) -> String:
+	var a: int = absi(n) % 100
+	var d: int = a % 10
+	if a >= 11 and a <= 14:
+		return "осталось"
+	if d == 1:
+		return "остался"
+	if d >= 2 and d <= 4:
+		return "остались"
+	return "осталось"
+
+func _set_skull_qty(num: Label, word: Label, n: int) -> void:
+	if is_instance_valid(num):
+		num.text = "%d" % n
+	if is_instance_valid(word):
+		word.text = _skull_word(n)
 
 func _refresh_prestige() -> void:
 	if is_instance_valid(_prestige_btn):
@@ -2288,24 +3523,27 @@ func _refresh_prestige() -> void:
 	if is_instance_valid(_prestige_pending_lbl):
 		if can:
 			var payout: int = Game.reset_payout_preview()
-			_prestige_pending_lbl.visible = payout > 0
-			_prestige_pending_lbl.text = "Начни Новую Сказку и получи: +%d черепов" % payout
+			var show_gain: bool = payout > 0
+			_prestige_pending_lbl.visible = show_gain
+			_prestige_pending_lbl.text = "Начни Новую Сказку и получишь ещё:"
+			if is_instance_valid(_prestige_gain_row):
+				_prestige_gain_row.visible = show_gain
+			if show_gain:
+				_set_skull_qty(_prestige_gain_n, _prestige_gain_word, payout)
 		else:
 			_prestige_pending_lbl.visible = true
 			_prestige_pending_lbl.text = "Копи Черепа с боссов. «Новая сказка» откроется со стадии %d." % Balance.PRESTIGE_UNLOCK_STAGE
+			if is_instance_valid(_prestige_gain_row):
+				_prestige_gain_row.visible = false
 	if is_instance_valid(_prestige_step1_go):
 		if _prestige_lock > 0:   # первый показ: кнопки заблокированы с отсчётом
 			_prestige_step1_go.disabled = true
 			_prestige_step1_go.text = "Новая Сказка (%d)" % _prestige_lock
-			if is_instance_valid(_prestige_step1_close):
-				_prestige_step1_close.disabled = true
-				_prestige_step1_close.text = "Осмотрись… %d" % _prestige_lock
 		else:
 			_prestige_step1_go.disabled = not can
 			_prestige_step1_go.text = "Новая Сказка" if can else "Открой стадию %d" % Balance.PRESTIGE_UNLOCK_STAGE
-			if is_instance_valid(_prestige_step1_close):
-				_prestige_step1_close.disabled = false
-				_prestige_step1_close.text = "Закрыть"
+	if is_instance_valid(_prestige_step1_close) and _prestige_step1_close.visible:
+		_prestige_step1_close.disabled = _prestige_lock > 0
 	if is_instance_valid(_prestige_summary_lbl):
 		_prestige_summary_lbl.text = "Сейчас: ×%s золото · ×%s DPS · ×%s тап" % [
 			_fmt_mult(Game.prestige_gold_mult()), _fmt_mult(Game.prestige_dps_mult()), _fmt_mult(Game.prestige_tap_mult())]
@@ -2318,14 +3556,7 @@ func _refresh_prestige() -> void:
 			prev = "   ×%s → ×%s" % [_fmt_mult(1.0 + per * lvl), _fmt_mult(1.0 + per * (lvl + 1))]
 		r.level.text = "ур. %d/%d%s" % [lvl, Game.meta_cap(id), prev]
 		var cost: int = Game.meta_cost(id)
-		if cost < 0:
-			r.btn.text = "МАКС"
-			r.btn.icon = null
-			r.btn.disabled = true
-		else:
-			r.btn.text = " %d" % cost
-			r.btn.icon = _skull_tex
-			r.btn.disabled = Economy.bells < cost
+		_set_meta_face(r.btn, cost)
 	if is_instance_valid(_prestige_confirm):
 		_prestige_confirm.text = "Новая Сказка"
 
@@ -2341,8 +3572,7 @@ func _on_prestige_node(id: String) -> void:
 		_prestige_row_pop(id)
 
 func _set_bells_display(v: int) -> void:
-	if is_instance_valid(_prestige_bells_lbl): _prestige_bells_lbl.text = "%d" % v
-	if is_instance_valid(_prestige_s1_count): _prestige_s1_count.text = "%d" % v
+	_set_skull_qty(_prestige_s1_count, _prestige_s1_word, v)
 
 # Прокрутка счётчика черепов вниз при трате
 func _roll_bells_to(from_v: int, to_v: int) -> void:
@@ -2352,10 +3582,12 @@ func _roll_bells_to(from_v: int, to_v: int) -> void:
 		_displayed_bells = float(to_v)
 		_set_bells_display(to_v)
 		return
-	var tw := _prestige_panel.create_tween()
-	tw.tween_method(func(v: float):
+	if _bells_roll_tw and _bells_roll_tw.is_valid():
+		_bells_roll_tw.kill()
+	_bells_roll_tw = _prestige_panel.create_tween()
+	_bells_roll_tw.tween_method(func(v: float):
 		_displayed_bells = v
-		_set_bells_display(int(round(v))), float(from_v), float(to_v), 0.45).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		_set_bells_display(int(round(v))), float(from_v), float(to_v), BUY_ROLL_DUR).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 # Черепа летят к иконке-счётчику (мелкие)
 func _prestige_fly(from: Vector2, to: Vector2) -> void:
@@ -2404,14 +3636,28 @@ func _prestige_row_pop(id: String) -> void:
 func _open_prestige() -> void:
 	if not is_instance_valid(_prestige_panel):
 		return
+	_bark_hide_for_modal()
+	_dismiss_prestige_nudge(true)             # поп-закрытие бабла до паузы
 	get_tree().paused = true
-	_dismiss_prestige_nudge()                 # игрок отреагировал на подсказку
 	_displayed_bells = float(Economy.bells)   # счётчик стартует с реального числа
 	if is_instance_valid(_prestige_step1): _prestige_step1.visible = true
 	if is_instance_valid(_prestige_step2): _prestige_step2.visible = false
 	if is_instance_valid(_prestige_leftover): _prestige_leftover.visible = false
+	_set_prestige_closable(true)
 	_refresh_prestige()
 	_pop_open(_prestige_panel, _prestige_box)
+
+func _prestige_can_dismiss() -> bool:
+	if _prestige_lock > 0:
+		return false
+	if is_instance_valid(_prestige_step2) and _prestige_step2.visible:
+		return false
+	return true
+
+func _set_prestige_closable(on: bool) -> void:
+	if is_instance_valid(_prestige_step1_close):
+		_prestige_step1_close.visible = on
+		_prestige_step1_close.disabled = not on
 
 func _close_prestige() -> void:
 	if not is_instance_valid(_prestige_panel):
@@ -2425,6 +3671,7 @@ func _prestige_goto_step2() -> void:
 		return
 	if is_instance_valid(_prestige_step1): _prestige_step1.visible = false
 	if is_instance_valid(_prestige_step2): _prestige_step2.visible = true
+	_set_prestige_closable(false)
 	_refresh_prestige()
 	_box_pop(_prestige_box)
 
@@ -2459,8 +3706,11 @@ func _show_prestige_leftover() -> void:
 	if not is_instance_valid(_prestige_leftover):
 		_do_prestige_now()
 		return
-	if is_instance_valid(_prestige_leftover_lbl):
-		_prestige_leftover_lbl.text = "Ещё остались Черепа: %d — их можно вложить в Вечные Усиления." % Economy.bells
+	_set_skull_qty(_prestige_leftover_n, _prestige_leftover_word, Economy.bells)
+	if is_instance_valid(_prestige_leftover_word):
+		_prestige_leftover_word.text = _skull_word(Economy.bells, false)
+	if is_instance_valid(_prestige_leftover_verb):
+		_prestige_leftover_verb.text = "У тебя %s" % _left_verb(Economy.bells)
 	_prestige_leftover.visible = true
 	_box_pop(_prestige_leftover_box)
 
@@ -2527,8 +3777,9 @@ func _build_prestige_leftover(parent: Control) -> void:
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_prestige_leftover.add_child(cc)
 	var b := PanelContainer.new()
-	b.add_theme_stylebox_override("panel", _flat(DARK, BLOOD, 18, 2, 22))
-	b.custom_minimum_size = Vector2(460, 0)
+	b.clip_contents = false
+	b.add_theme_stylebox_override("panel", _ui_modal_flat())
+	b.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
 	cc.add_child(b)
 	_prestige_leftover_box = b
 	var vb := VBoxContainer.new()
@@ -2537,20 +3788,43 @@ func _build_prestige_leftover(parent: Control) -> void:
 	var t := Label.new()
 	t.text = "Точно начнем Новую Сказку?"
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	t.custom_minimum_size = Vector2(1, 0)
 	_lab(t, F_BODY, GOLD)
 	if _header_font: t.add_theme_font_override("font", _header_font)
 	vb.add_child(t)
-	_prestige_leftover_lbl = Label.new()
-	_prestige_leftover_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_prestige_leftover_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_lab(_prestige_leftover_lbl, F_SMALL, MUTED)
-	vb.add_child(_prestige_leftover_lbl)
-	var yes := _settings_button("Да, начать", BLOOD, true)
-	yes.pressed.connect(_do_prestige_now)
-	vb.add_child(yes)
-	var no := _settings_button("Нет", SURF, false)
-	no.pressed.connect(func(): _prestige_leftover.visible = false)
-	vb.add_child(no)
+	var have := HBoxContainer.new()
+	have.alignment = BoxContainer.ALIGNMENT_CENTER
+	have.add_theme_constant_override("separation", 8)
+	var have_pref := Label.new()
+	_prestige_leftover_verb = have_pref
+	have_pref.text = "У тебя осталось"
+	_lab(have_pref, F_BODY, TXT)
+	have_pref.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	have.add_child(have_pref)
+	_prestige_leftover_n = Label.new()
+	_lab(_prestige_leftover_n, F_TITLE, Color("#cdbfd6"))
+	if _header_font: _prestige_leftover_n.add_theme_font_override("font", _header_font)
+	have.add_child(_prestige_leftover_n)
+	have.add_child(_skull_icon(34))
+	_prestige_leftover_word = Label.new()
+	_lab(_prestige_leftover_word, F_TITLE, Color("#cdbfd6"))
+	if _header_font: _prestige_leftover_word.add_theme_font_override("font", _header_font)
+	have.add_child(_prestige_leftover_word)
+	vb.add_child(have)
+	var hint := Label.new()
+	hint.text = "Черепа можно вложить в усиления!"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(1, 0)
+	_lab(hint, F_SUB, MUTED)
+	vb.add_child(hint)
+	var spend := _settings_button("Вернемся и потратим Черепа", WOOD, true)
+	spend.pressed.connect(func(): _prestige_leftover.visible = false)
+	vb.add_child(spend)
+	var start := _settings_button("Начнем Новую Сказку", SURF, false)
+	start.pressed.connect(_do_prestige_now)
+	vb.add_child(start)
 
 func _maybe_prestige_intro() -> void:
 	if _prestige_intro_seen or not Game.can_prestige():
@@ -2629,8 +3903,9 @@ const DIALOG_ARM_DELAY := 2.2   # сек: пауза, пока кнопки ди
 func _show_char_dialog(text: String, yes_t: String, no_t: String, on_yes: Callable, on_no: Callable) -> void:
 	if is_instance_valid(_char_layer):
 		_char_layer.queue_free()
+	_bark_hide_for_modal()
 	_char_layer = CanvasLayer.new()
-	_char_layer.layer = 66
+	_char_layer.layer = UI_Z_MODAL + 1
 	_char_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(_char_layer)
 	var panel := Control.new()
@@ -2645,8 +3920,8 @@ func _show_char_dialog(text: String, yes_t: String, no_t: String, on_yes: Callab
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(cc)
 	var box := PanelContainer.new()
-	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 20, 2, 22))
-	box.custom_minimum_size = Vector2(560, 0)
+	box.add_theme_stylebox_override("panel", _ui_modal_flat())
+	box.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
 	cc.add_child(box)
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 14)
@@ -2655,7 +3930,7 @@ func _show_char_dialog(text: String, yes_t: String, no_t: String, on_yes: Callab
 	hb.add_theme_constant_override("separation", 14)
 	vb.add_child(hb)
 	var pf := Panel.new()
-	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, GOLD, 12, 2, 0))
+	pf.add_theme_stylebox_override("panel", _flat(PORTRAIT_BG, UI_PURPLE, 12, 2, 0))
 	pf.custom_minimum_size = Vector2(128, 128)
 	pf.clip_contents = true
 	hb.add_child(pf)
@@ -2701,43 +3976,251 @@ func _show_char_dialog(text: String, yes_t: String, no_t: String, on_yes: Callab
 		if is_instance_valid(no): no.create_tween().tween_property(no, "modulate:a", 1.0, 0.22))
 
 
-# === v1.0.2: онбординг / оценка / тост / обновление ==========================
+# === Review: ведьма выглядывает из модалки ==================================
 func _open_store_page() -> void:
 	OS.shell_open(STORE_URL)
 
-# Промпт «Оцените игру» — разово, после позитивного пика (первый босс)
+
+func _review_can_show() -> bool:
+	if _review_done or not _tut_done:
+		return false
+	if _review_attempts >= 2:
+		return false
+	if _review_attempts == 0:
+		return _boss_wins >= REVIEW_BOSS_NEED
+	# повтор: кулдаун + 3 победы в этой сессии
+	if _session_boss_wins < REVIEW_BOSS_NEED:
+		return false
+	if _review_later_unix <= 0:
+		return false
+	return Time.get_unix_time_from_system() - _review_later_unix >= REVIEW_COOLDOWN_SEC
+
+
 func _maybe_ask_review() -> void:
-	if _review_asked or not _tut_done:
+	if not _review_can_show():
 		return
+	if _tut_step >= 0 or _ui_modal_busy():
+		# не копить вечные ретраи, если уже нельзя показать
+		if _review_can_show():
+			get_tree().create_timer(8.0, true, false, true).timeout.connect(_maybe_ask_review)
+		return
+	_show_review_modal(true)
+
+
+func _review_witch_tex() -> Texture2D:
+	var special: Texture2D = _try_load_tex(REVIEW_WITCH_PATH)
+	if special:
+		return special
+	if _ally_tex.has("witch") and _ally_tex["witch"] is Texture2D:
+		return _ally_tex["witch"]
+	return _try_load_tex(ALLY_TEX_V3_PATHS.get("witch", ""))
+
+
+func _show_review_modal(count_attempt: bool = true) -> void:
+	if is_instance_valid(_review_panel):
+		return
+	_bark_hide_for_modal()
+	if count_attempt:
+		_review_attempts += 1
+		_save_settings()
+		Analytics.report("review_shown", {"attempt": _review_attempts})
+
+	if not is_instance_valid(_review_layer):
+		_review_layer = CanvasLayer.new()
+		_review_layer.layer = UI_Z_MODAL + 1
+		_review_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+		add_child(_review_layer)
+
+	get_tree().paused = true
+	_review_panel = Control.new()
+	_review_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_review_layer.add_child(_review_panel)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.84)   # review: сильнее обычных модалок (~0.66)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_review_panel.add_child(dim)
+
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_review_panel.add_child(cc)
+
+	# Портрет сверху; окно модалки поверх арта (силуэт «из» рамки)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", -16)
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cc.add_child(col)
+
+	var art_w := UI_DAILY_MODAL_W - float(UI_MODAL_PAD) * 2.0
+	var witch_tex: Texture2D = _review_witch_tex()
+	var art_h := art_w * 1.28
+	if witch_tex:
+		var tsz: Vector2 = witch_tex.get_size()
+		if tsz.x > 1.0:
+			art_h = art_w * (tsz.y / tsz.x)
+
+	var peek := Control.new()
+	peek.custom_minimum_size = Vector2(art_w, art_h)
+	peek.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	peek.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	peek.z_index = 0
+	col.add_child(peek)
+
+	if witch_tex:
+		var tr := TextureRect.new()
+		tr.texture = witch_tex
+		tr.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		tr.offset_top = -2.0
+		tr.offset_bottom = -2.0   # поднять арт на 2px
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		peek.add_child(tr)
+	else:
+		var ph := Label.new()
+		ph.text = "✦"
+		ph.set_anchors_preset(Control.PRESET_CENTER)
+		ph.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_lab(ph, F_BOSS, ALLY_COLORS.get("witch", UI_PURPLE))
+		peek.add_child(ph)
+
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _ui_modal_flat(UI_MODAL_PAD))
+	box.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
+	box.z_index = 2   # панель поверх портрета
+	col.add_child(box)
+	_review_box = box
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 16)
+	box.add_child(vb)
+
+	var title := Label.new()
+	title.text = "Понравился Панк-Кликер?"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(title, F_BOSS, GOLD)
+	if _header_font:
+		title.add_theme_font_override("font", _header_font)
+	vb.add_child(title)
+
+	var body := Label.new()
+	body.text = "Не стесняйся, поставь нам звёзды в RuStore. Ведьма ждёт... И не забудь про отзыв..."
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(body, F_BODY, TXT)
+	vb.add_child(body)
+
+	var yes := _settings_button("Оценить в RuStore", WOOD, true)
+	var no := _settings_button("Позже", SURF, false)
+	var armed := {"v": false}
+	yes.modulate.a = 0.4
+	no.modulate.a = 0.4
+	yes.pressed.connect(func():
+		if not armed["v"]:
+			return
+		_on_review_store())
+	no.pressed.connect(func():
+		if not armed["v"]:
+			return
+		_on_review_later())
+	vb.add_child(yes)
+	vb.add_child(no)
+
+	_pop_open(_review_panel, box)
+	get_tree().create_timer(REVIEW_ARM_DELAY, true, false, true).timeout.connect(func():
+		armed["v"] = true
+		if is_instance_valid(yes):
+			yes.create_tween().tween_property(yes, "modulate:a", 1.0, 0.22)
+		if is_instance_valid(no):
+			no.create_tween().tween_property(no, "modulate:a", 1.0, 0.22))
+
+
+func _close_review_modal() -> void:
+	get_tree().paused = false
+	if is_instance_valid(_review_panel):
+		_pop_close_free(_review_panel, _review_box)
+	_review_panel = null
+	_review_box = null
+
+
+func _on_review_store() -> void:
+	_review_done = true
 	_review_asked = true
 	_save_settings()
-	await get_tree().create_timer(1.4, true, false, true).timeout
-	_show_char_dialog(
-		"Оцени игру, если зашло. Честный панк-обмен: тебе игра, нам звёзды!",
-		"Оценить", "Позже",
-		_open_store_page, func(): pass)
+	Analytics.report("review_store", {"attempt": _review_attempts})
+	_close_review_modal()
+	_open_store_page()
 
-# Разовая подсказка про кнопку «Клад» (×2 за ролик): пульс кнопки + бабл Шута
+
+func _on_review_later() -> void:
+	_review_later_unix = int(Time.get_unix_time_from_system())
+	_save_settings()
+	Analytics.report("review_later", {"attempt": _review_attempts})
+	_close_review_modal()
+
+
+# Разовая подсказка про кнопку «Клад» (×2 за ролик): пульс кнопки + бабл
 func _maybe_klad_hint() -> void:
 	if _klad_hint_seen or not _tut_done:
 		return
-	if not is_instance_valid(_reward_btn) or not _reward_btn.visible:
+	if _tut_step >= 0 or _ui_modal_busy():
+		get_tree().create_timer(5.0, true, false, true).timeout.connect(_maybe_klad_hint)
+		return
+	var btn: Button = _side_klad.get("btn") if not _side_klad.is_empty() else _reward_btn
+	if not is_instance_valid(btn) or not btn.visible:
 		return
 	_klad_hint_seen = true
 	_save_settings()
-	_reward_btn.pivot_offset = _reward_btn.size * 0.5
-	var pt := _reward_btn.create_tween().set_loops(6)
-	pt.tween_property(_reward_btn, "scale", Vector2(1.12, 1.12), 0.45).set_trans(Tween.TRANS_SINE)
-	pt.tween_property(_reward_btn, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_SINE)
+	_klad_attention_pulse(btn, 6)
 	_show_klad_tip("Глянь короткий ролик — золото удвоится. Халявы много не бывает.")
+	_arm_klad_session_rehint()
+
+
+# Мягкий повтор тоста раз за сессию: только если онбординг уже был и Клада не смотрели.
+func _arm_klad_session_rehint() -> void:
+	if _klad_rehint_armed or _klad_session_rehint_done or _klad_watched_session:
+		return
+	if not _klad_hint_seen or not _tut_done:
+		return
+	_klad_rehint_armed = true
+	get_tree().create_timer(KLAD_REHINT_SEC, true, false, true).timeout.connect(_maybe_klad_session_rehint)
+
+
+func _maybe_klad_session_rehint() -> void:
+	_klad_rehint_armed = false
+	if _klad_session_rehint_done or _klad_watched_session:
+		return
+	if not _klad_hint_seen or not _tut_done:
+		return
+	if _tut_step >= 0 or _ui_modal_busy():
+		_klad_rehint_armed = true
+		get_tree().create_timer(45.0, true, false, true).timeout.connect(_maybe_klad_session_rehint)
+		return
+	var btn: Button = _side_klad.get("btn") if not _side_klad.is_empty() else _reward_btn
+	if not is_instance_valid(btn) or not btn.visible:
+		return
+	_klad_session_rehint_done = true
+	_klad_attention_pulse(btn, 3)
+	_show_klad_tip("Клад всё ещё ждёт — короткий ролик, и золото в карман.")
+
+
+func _klad_attention_pulse(btn: Control, loops: int) -> void:
+	if not is_instance_valid(btn):
+		return
+	btn.pivot_offset = btn.size * 0.5
+	var pt := btn.create_tween().set_loops(maxi(1, loops))
+	pt.tween_property(btn, "scale", Vector2(1.12, 1.12), 0.45).set_trans(Tween.TRANS_SINE)
+	pt.tween_property(btn, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_SINE)
 
 func _show_klad_tip(msg: String) -> void:
 	var layer := CanvasLayer.new()
-	layer.layer = 80
+	layer.layer = UI_Z_TOAST
 	layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(layer)
 	var box := PanelContainer.new()
-	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 14, 2, 12))
+	box.add_theme_stylebox_override("panel", _flat(DARK, UI_PURPLE, 14, 2, 12))
 	box.custom_minimum_size = Vector2(320, 0)
 	layer.add_child(box)
 	var lbl := Label.new()
@@ -2746,23 +4229,30 @@ func _show_klad_tip(msg: String) -> void:
 	_lab(lbl, F_BODY, TXT)
 	box.add_child(lbl)
 	await get_tree().process_frame          # дать боксу посчитать размер
-	if not is_instance_valid(_reward_btn):
+	var btn: Control = _side_klad.get("btn") if not _side_klad.is_empty() else _reward_btn
+	if not is_instance_valid(btn):
 		layer.queue_free(); return
-	var r := _reward_btn.get_global_rect()
-	box.position = Vector2(clampf(r.end.x - 320.0, 12.0, 388.0), r.end.y + 8.0)
+	var r := btn.get_global_rect()
+	box.position = Vector2(clampf(r.position.x - 240.0, 12.0, 388.0), r.end.y + 8.0)
 	box.modulate.a = 0.0
+	box.pivot_offset = box.size * 0.5
+	box.scale = Vector2(0.72, 0.72)
 	var t := box.create_tween()
-	t.tween_property(box, "modulate:a", 1.0, 0.25)
-	t.tween_interval(5.0)
-	t.tween_property(box, "modulate:a", 0.0, 0.4)
-	t.tween_callback(func(): if is_instance_valid(layer): layer.queue_free())
+	t.set_parallel(true)
+	t.tween_property(box, "modulate:a", 1.0, 0.12)
+	t.tween_property(box, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	t.chain().tween_interval(5.0)
+	t.set_parallel(true)
+	t.tween_property(box, "modulate:a", 0.0, 0.12)
+	t.tween_property(box, "scale", Vector2(0.72, 0.72), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	t.chain().tween_callback(func(): if is_instance_valid(layer): layer.queue_free())
 
 # Короткий тост (реклама недоступна и пр.). centered=true — по центру экрана.
 func _toast(msg: String, secs: float = 2.6, centered: bool = false) -> void:
 	if is_instance_valid(_toast_layer):
 		_toast_layer.queue_free()
 	_toast_layer = CanvasLayer.new()
-	_toast_layer.layer = 80
+	_toast_layer.layer = UI_Z_TOAST
 	_toast_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(_toast_layer)
 	var mc := MarginContainer.new()
@@ -2781,7 +4271,7 @@ func _toast(msg: String, secs: float = 2.6, centered: bool = false) -> void:
 	_toast_layer.add_child(mc)
 	var box := PanelContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 16, 2, 14))
+	box.add_theme_stylebox_override("panel", _flat(DARK, UI_PURPLE, 16, 2, 14))
 	mc.add_child(box)
 	var lbl := Label.new()
 	lbl.text = msg
@@ -2807,7 +4297,7 @@ func _late_hooks(tries: int) -> void:
 			get_tree().create_timer(4.0, true, false, true).timeout.connect(_late_hooks.bind(tries + 1))
 		return
 	if _tut_done:
-		_maybe_klad_hint()
+		_arm_klad_session_rehint()   # возвращенцы: повтор тоста ~через 3 мин, если не смотрели
 		_check_update()
 
 # Проверка обновления: читаем version.json с GitHub Pages, сравниваем код версии
@@ -2842,21 +4332,359 @@ func _on_update_checked(result: int, code: int, _headers: PackedStringArray, bod
 		_open_store_page, func(): pass)
 
 
+# --- Сайдбары арены -----------------------------------------------------------
+func _build_sidebars() -> void:
+	if not is_instance_valid(_arena):
+		return
+	# старые кнопки на арене/топбаре прячем — логика на слотах
+	if is_instance_valid(_reward_btn):
+		_reward_btn.visible = false
+		_reward_btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	_side_left = VBoxContainer.new()
+	_side_left.name = "SideLeft"
+	_side_left.add_theme_constant_override("separation", SIDE_GAP)
+	_side_left.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_side_left.z_index = 6
+	_side_left.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_side_left.offset_left = SIDE_EDGE
+	_side_left.offset_top = SIDE_TOP
+	_side_left.offset_right = SIDE_EDGE + SIDE_W
+	_side_left.offset_bottom = SIDE_TOP + 320.0
+	_arena.add_child(_side_left)
+
+	_side_right = VBoxContainer.new()
+	_side_right.name = "SideRight"
+	_side_right.add_theme_constant_override("separation", SIDE_GAP)
+	_side_right.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_side_right.z_index = 6
+	_side_right.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_side_right.offset_left = -(SIDE_EDGE + SIDE_W)
+	_side_right.offset_top = SIDE_TOP
+	_side_right.offset_right = -SIDE_EDGE
+	_side_right.offset_bottom = SIDE_TOP + 400.0
+	_arena.add_child(_side_right)
+
+	_side_afisha = _make_side_slot("АФИША", UI_PURPLE, "res://art/ui/side/afisha.png", true)
+	_side_left.add_child(_side_afisha.root)
+	_side_afisha.btn.pressed.connect(_open_daily)
+
+	_side_klad = _make_side_slot("КЛАД", GOLD, "res://art/ui/side/klad.png", false)
+	_side_right.add_child(_side_klad.root)
+	_side_klad.btn.pressed.connect(_on_reward_pressed)
+	_reward_btn = _side_klad.btn   # дальше disabled/pulse идут в слот
+
+	_side_x2 = _make_side_slot("УРОН X2", BLOOD, "res://art/ui/side/dmg2.png", false)
+	_side_right.add_child(_side_x2.root)
+	_boss_ad_btn = _side_x2.btn
+	_boss_ad_btn.pressed.connect(_on_boss_ad_pressed)
+	_side_x2.root.visible = false
+	_side_x2["shown"] = false
+
+	_side_afisha.root.visible = false
+	_side_afisha["shown"] = false
+	_refresh_daily_btn()
+	# Клад всегда на месте после билда (лёгкий pop)
+	_side_slot_set_visible(_side_klad, true, true)
+
+
+func _side_text_outline(lab: Label) -> void:
+	lab.add_theme_color_override("font_outline_color", Color(0.02, 0.0, 0.05, 0.78))
+	lab.add_theme_constant_override("outline_size", 3)
+
+
+## Блокирует сайдбар на время босс-оффера (поверх паузы — страховка от дыр в dim).
+func _side_set_input_blocked(blocked: bool) -> void:
+	for slot in [_side_afisha, _side_klad, _side_x2]:
+		if typeof(slot) != TYPE_DICTIONARY or slot.is_empty():
+			continue
+		var btn: Button = slot.get("btn") as Button
+		if not is_instance_valid(btn):
+			continue
+		if blocked:
+			if not btn.has_meta("side_prev_disabled"):
+				btn.set_meta("side_prev_disabled", btn.disabled)
+			btn.disabled = true
+		else:
+			var prev: bool = bool(btn.get_meta("side_prev_disabled", false))
+			btn.disabled = prev
+			if btn.has_meta("side_prev_disabled"):
+				btn.remove_meta("side_prev_disabled")
+
+
+## Часы Афиши при tree.paused (_process не тикает) — только footer, без visibility/tween.
+func _ensure_afisha_pause_clock() -> void:
+	if has_node("AfishaPauseClock"):
+		return
+	var t := Timer.new()
+	t.name = "AfishaPauseClock"
+	t.wait_time = 1.0
+	t.one_shot = false
+	t.autostart = true
+	t.process_mode = Node.PROCESS_MODE_ALWAYS
+	t.timeout.connect(_tick_afisha_foot_while_paused)
+	add_child(t)
+
+
+func _tick_afisha_foot_while_paused() -> void:
+	if get_tree() == null or not get_tree().paused:
+		return
+	if _side_afisha.is_empty() or not bool(_side_afisha.get("shown", false)):
+		return
+	if not is_instance_valid(_side_afisha.get("foot")):
+		return
+	var foot: Label = _side_afisha.foot
+	var unlocked: bool = _daily_intro_seen or (_tut_done and Game.daily_claims > 0)
+	if not unlocked:
+		return
+	if Game.daily_available():
+		foot.text = "Забери!"
+		foot.add_theme_color_override("font_color", GOLD)
+	else:
+		foot.text = _fmt_secs_hms(Game.secs_until_daily())
+		foot.add_theme_color_override("font_color", SIDE_TIMER)
+
+
+func _make_side_slot(title: String, accent: Color, icon_path: String, with_foot: bool) -> Dictionary:
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 4)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.custom_minimum_size = Vector2(SIDE_W, 0)
+	root.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+
+	var lab := Label.new()
+	lab.text = title
+	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lab.clip_text = false
+	lab.autowrap_mode = TextServer.AUTOWRAP_OFF
+	lab.custom_minimum_size = Vector2(SIDE_W, 0)
+	_lab(lab, SIDE_TITLE_F if title.length() <= 6 else 20, TXT)
+	_side_text_outline(lab)
+	lab.add_theme_constant_override("outline_size", 4)
+	if _header_font:
+		lab.add_theme_font_override("font", _header_font)
+	root.add_child(lab)
+
+	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.custom_minimum_size = Vector2(SIDE_PORT, SIDE_PORT)
+	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	btn.clip_contents = true
+	for st in ["normal", "hover", "pressed", "focus", "disabled"]:
+		btn.add_theme_stylebox_override(st, _flat(PORTRAIT_BG, accent, 999, SIDE_BORDER, 0))
+	root.add_child(btn)
+
+	var icon := TextureRect.new()
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# чуть внутри бордера + запас, чтобы кольцо рамки оставалось чистым
+	var inset: float = float(SIDE_BORDER) + 2.0
+	icon.offset_left = inset; icon.offset_top = inset
+	icon.offset_right = -inset; icon.offset_bottom = -inset
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sh := load("res://game/scenes/side_icon_circle.gdshader")
+	if sh is Shader:
+		var mat := ShaderMaterial.new()
+		mat.shader = sh
+		icon.material = mat
+	var tex: Texture2D = _try_load_tex(icon_path) if icon_path != "" else null
+	if tex:
+		icon.texture = tex
+		icon.visible = true
+	else:
+		icon.visible = false
+	btn.add_child(icon)
+
+	var ph := Label.new()
+	ph.text = ""
+	ph.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ph.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ph.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lab(ph, F_SUB, accent)
+	if _header_font:
+		ph.add_theme_font_override("font", _header_font)
+	ph.visible = tex == null
+	btn.add_child(ph)
+
+	var foot: Label = null
+	if with_foot:
+		foot = Label.new()
+		foot.text = ""
+		foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		foot.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		foot.custom_minimum_size = Vector2(SIDE_W, 0)
+		foot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_lab(foot, SIDE_FOOT_F, SIDE_TIMER)
+		_side_text_outline(foot)
+		root.add_child(foot)
+
+	return {
+		"root": root, "title": lab, "btn": btn, "icon": icon, "ph": ph,
+		"foot": foot, "accent": accent, "shown": false, "pulse": null,
+	}
+
+
+func _side_slot_set_visible(slot: Dictionary, want: bool, instant: bool = false) -> void:
+	if slot.is_empty() or not is_instance_valid(slot.get("root")):
+		return
+	var root: Control = slot.root
+	var was: bool = bool(slot.get("shown", false))
+	if want == was and root.visible == want:
+		return
+	slot["shown"] = want
+	if instant:
+		root.visible = want
+		root.modulate.a = 1.0 if want else 0.0
+		root.scale = Vector2.ONE
+		return
+	root.pivot_offset = Vector2(root.size.x * 0.5, SIDE_PORT * 0.5 + 12.0)
+	if want:
+		root.visible = true
+		root.modulate.a = 0.0
+		root.scale = Vector2(0.72, 0.72)
+		var t := root.create_tween().set_parallel(true)
+		t.tween_property(root, "modulate:a", 1.0, 0.12)
+		t.tween_property(root, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	else:
+		var t2 := root.create_tween().set_parallel(true)
+		t2.tween_property(root, "modulate:a", 0.0, 0.12)
+		t2.tween_property(root, "scale", Vector2(0.72, 0.72), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+		t2.chain().tween_callback(func():
+			if is_instance_valid(root):
+				root.visible = false
+				root.scale = Vector2.ONE)
+
+
+func _side_x2_pulse(on: bool) -> void:
+	if _side_x2.is_empty() or not is_instance_valid(_side_x2.get("btn")):
+		return
+	var btn: Control = _side_x2.btn
+	var tw = _side_x2.get("pulse")
+	if tw != null and (tw as Tween).is_valid():
+		(tw as Tween).kill()
+	_side_x2["pulse"] = null
+	btn.scale = Vector2.ONE
+	btn.modulate = Color.WHITE
+	if not on:
+		return
+	btn.pivot_offset = btn.size * 0.5
+	var t := btn.create_tween().set_loops()
+	t.tween_property(btn, "scale", Vector2(1.1, 1.1), 0.4).set_trans(Tween.TRANS_SINE)
+	t.tween_property(btn, "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_SINE)
+	_side_x2["pulse"] = t
+
+
+func _side_klad_idle_sync() -> void:
+	## Тот же язык, что ×2: мягкий SINE-пульс, пока Клад доступен и ещё не смотрели в сессии.
+	if _side_klad.is_empty() or not is_instance_valid(_side_klad.get("btn")):
+		return
+	var want: bool = bool(_side_klad.get("shown", false)) \
+		and not _klad_watched_session \
+		and not _ui_modal_busy() \
+		and not (_tut_step >= 0) \
+		and _tut_done
+	var btn: Button = _side_klad.btn
+	if btn.disabled:
+		want = false
+	var tw = _side_klad.get("pulse")
+	var running: bool = tw != null and (tw as Tween).is_valid()
+	if want and running:
+		return
+	if not want:
+		if running:
+			(tw as Tween).kill()
+		_side_klad["pulse"] = null
+		# не сбивать короткий nudge_tw
+		var nt = _side_klad.get("nudge_tw")
+		if nt == null or not (nt as Tween).is_valid():
+			btn.scale = Vector2.ONE
+			btn.modulate = Color.WHITE
+			btn.rotation_degrees = 0.0
+		return
+	btn.pivot_offset = btn.size * 0.5
+	var t := btn.create_tween().set_loops()
+	# Чуть мягче ×2 (1.08 vs 1.10), золотой оттенок — свой акцент Клада
+	t.set_parallel(true)
+	t.tween_property(btn, "scale", Vector2(1.08, 1.08), 0.55).set_trans(Tween.TRANS_SINE)
+	t.tween_property(btn, "modulate", Color(1.22, 1.12, 0.82, 1.0), 0.55).set_trans(Tween.TRANS_SINE)
+	t.chain()
+	t.set_parallel(true)
+	t.tween_property(btn, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
+	t.tween_property(btn, "modulate", Color.WHITE, 0.55).set_trans(Tween.TRANS_SINE)
+	_side_klad["pulse"] = t
+
+
+func _side_klad_nudge() -> void:
+	# Редкий акцент поверх idle: BACK-scale + вспышка + лёгкий shake (без тоста).
+	if _side_klad.is_empty() or not is_instance_valid(_side_klad.get("btn")):
+		return
+	if not bool(_side_klad.get("shown", false)):
+		return
+	var btn: Control = _side_klad.btn
+	if btn.disabled:
+		return
+	# пауза idle-пульса на время акцента
+	var idle = _side_klad.get("pulse")
+	if idle != null and (idle as Tween).is_valid():
+		(idle as Tween).kill()
+	_side_klad["pulse"] = null
+	var old = _side_klad.get("nudge_tw")
+	if old != null and (old as Tween).is_valid():
+		(old as Tween).kill()
+	btn.pivot_offset = btn.size * 0.5
+	btn.rotation_degrees = 0.0
+	btn.scale = Vector2.ONE
+	btn.modulate = Color.WHITE
+	var t := btn.create_tween()
+	t.set_parallel(true)
+	t.tween_property(btn, "scale", Vector2(1.14, 1.14), 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	t.tween_property(btn, "modulate", Color(1.45, 1.28, 0.75, 1.0), 0.12)
+	t.chain()
+	t.set_parallel(true)
+	t.tween_property(btn, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	t.tween_property(btn, "modulate", Color.WHITE, 0.22)
+	t.chain()
+	t.tween_property(btn, "rotation_degrees", -7.0, 0.05)
+	t.tween_property(btn, "rotation_degrees", 7.0, 0.07)
+	t.tween_property(btn, "rotation_degrees", -4.0, 0.06)
+	t.tween_property(btn, "rotation_degrees", 0.0, 0.07)
+	t.tween_callback(_side_klad_idle_sync)
+	_side_klad["nudge_tw"] = t
+
+
+func _fmt_secs_hms(secs: int) -> String:
+	var s: int = maxi(0, secs)
+	var h: int = int(s / 3600)
+	var m: int = int((s % 3600) / 60)
+	var r: int = s % 60
+	if h > 0:
+		return "%d:%02d:%02d" % [h, m, r]
+	return "%d:%02d" % [m, r]
+
+
+func _side_afisha_center() -> Vector2:
+	if _side_afisha.has("btn") and is_instance_valid(_side_afisha.btn):
+		return _global_center(_side_afisha.btn)
+	return Vector2(80, 200)
+
+
+func _side_klad_center() -> Vector2:
+	if _side_klad.has("btn") and is_instance_valid(_side_klad.btn):
+		return _global_center(_side_klad.btn)
+	if is_instance_valid(_reward_btn):
+		return _global_center(_reward_btn)
+	return Vector2(640, 200)
+
+
 # --- «Афиша дня» ---------------------------------------------------------------
 func _build_daily() -> void:
-	# кнопка «ДЕНЬ N» в правой колонке топбара, под шестерёнкой
-	_daily_btn = Button.new()
-	_daily_btn.focus_mode = Control.FOCUS_NONE
-	_daily_btn.add_theme_font_size_override("font_size", F_SMALL)
-	_daily_btn.custom_minimum_size = Vector2(92, 42)
-	_daily_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
-	_style_button(_daily_btn, WOOD, WOOD_BORDER, GOLD)
-	_daily_btn.pressed.connect(_open_daily)
-	var rc := get_node_or_null("%RightCol")
-	if rc: rc.add_child(_daily_btn)
-
+	# вход в афишу — левый сайдбар (_build_sidebars); модалка ниже
 	_daily_layer = CanvasLayer.new()
-	_daily_layer.layer = 57
+	_daily_layer.layer = UI_Z_MODAL
 	_daily_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(_daily_layer)
 	_daily_panel = Control.new()
@@ -2864,7 +4692,7 @@ func _build_daily() -> void:
 	_daily_panel.visible = false
 	_daily_layer.add_child(_daily_panel)
 	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.7)
+	dim.color = Color(0, 0, 0, 0.72)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.gui_input.connect(func(e: InputEvent):
 		if e is InputEventMouseButton and e.pressed:
@@ -2875,116 +4703,148 @@ func _build_daily() -> void:
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_daily_panel.add_child(cc)
 	_daily_box = PanelContainer.new()
-	_daily_box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 20, 2, 22))
-	_daily_box.custom_minimum_size = Vector2(560, 0)
+	_daily_box.clip_contents = false
+	_daily_box.add_theme_stylebox_override("panel", _ui_modal_flat())
+	_daily_box.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
 	cc.add_child(_daily_box)
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 10)
+	vb.add_theme_constant_override("separation", UI_DAILY_VB_GAP)
+	vb.mouse_filter = Control.MOUSE_FILTER_PASS
+	vb.clip_contents = false
 	_daily_box.add_child(vb)
 
-	var title := Label.new()
-	title.text = "Афиша"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(title, F_TITLE, GOLD)
-	if _header_font: title.add_theme_font_override("font", _header_font)
-	vb.add_child(title)
-	var flavor := Label.new()
-	flavor.text = "Заходи каждый день — награды растут вместе с труппой!"
-	flavor.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	flavor.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_lab(flavor, F_SMALL, MUTED)
-	vb.add_child(flavor)
+	# заголовок + крестик (Icons-10)
+	var head := _ui_modal_title_bar("Афиша", _close_daily)
+	vb.add_child(head["root"])
+	_daily_flavor = Label.new()
+	_daily_flavor.text = "Награды растут с каждым днем и силой твоей труппы!"
+	_daily_flavor.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_daily_flavor.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_daily_flavor.custom_minimum_size = Vector2(UI_DAILY_CONTENT_W, 0)
+	_lab(_daily_flavor, F_SUB, Color("#cfc4db"))
+	_daily_flavor.add_theme_color_override("font_outline_color", Color(0.02, 0.0, 0.05, 0.55))
+	_daily_flavor.add_theme_constant_override("outline_size", 2)
+	vb.add_child(_daily_flavor)
 
-	# сетка: фиксированные квадраты 3×2 (не тянутся) + широкая полоса Гранд-финала
+	# сетка: подпись дня сверху → квадрат награды; 3×2 + Гранд-финал
 	_daily_slots.clear()
 	for row_days in [[1, 2, 3], [4, 5, 6]]:
 		var hb := HBoxContainer.new()
-		hb.add_theme_constant_override("separation", 12)
+		hb.add_theme_constant_override("separation", UI_DAILY_GAP)
 		hb.alignment = BoxContainer.ALIGNMENT_CENTER
 		vb.add_child(hb)
 		for d in row_days:
 			hb.add_child(_daily_slot(d, false))
 	vb.add_child(_daily_slot(7, true))
 
+	# футер фиксированной высоты: подсказка + кнопка (Забрать / таймер) — без скачка
 	_daily_next_lbl = Label.new()
+	_daily_next_lbl.text = "Приходи завтра за новыми наградами!"
 	_daily_next_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(_daily_next_lbl, F_SMALL, MUTED)
-	_daily_next_lbl.visible = false
+	_daily_next_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_daily_next_lbl.custom_minimum_size = Vector2(UI_DAILY_CONTENT_W, 0)
+	_lab(_daily_next_lbl, F_SUB, Color("#cfc4db"))
+	_daily_next_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.0, 0.05, 0.55))
+	_daily_next_lbl.add_theme_constant_override("outline_size", 2)
+	_daily_next_lbl.visible = true
 	vb.add_child(_daily_next_lbl)
 
 	_daily_claim_btn = _settings_button("Забрать", WOOD, true)
+	_daily_claim_btn.custom_minimum_size = Vector2(UI_DAILY_BTN_W, UI_DAILY_BTN_H)
+	_daily_claim_btn.add_theme_color_override("font_disabled_color", SIDE_TIMER)
 	_daily_claim_btn.pressed.connect(_on_daily_claim)
 	vb.add_child(_daily_claim_btn)
-	var close := _settings_button("Закрыть", SURF, false)
-	close.pressed.connect(_close_daily)
-	vb.add_child(close)
+	_refresh_daily_footer()
 
 func _daily_slot(d: int, wide: bool) -> Control:
-	var frame := PanelContainer.new()
-	frame.add_theme_stylebox_override("panel", _flat(SURF, SURF_BORDER, 12, 2, 8))
-	# фиксированные размеры — сетка не «разъезжается»
-	frame.custom_minimum_size = Vector2(500, 96) if wide else Vector2(158, 172)
-	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	var ic := TextureRect.new()
-	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	ic.custom_minimum_size = Vector2(64, 64) if wide else Vector2(46, 46)
-	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# корень: [подпись дня] над [рамкой награды]
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 4)
+	root.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	root.alignment = BoxContainer.ALIGNMENT_CENTER
+
 	var day_lbl := Label.new()
 	day_lbl.text = "Гранд-финал" if d == 7 else "День %d" % d
 	day_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	day_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_lab(day_lbl, F_SMALL, GOLD if d == 7 else MUTED)
-	if d == 7 and _header_font: day_lbl.add_theme_font_override("font", _header_font)
-	# золотой бейдж «✓» забранного дня (на Label — оверлей контейнером не разъезжается)
-	var check := Panel.new()
-	check.add_theme_stylebox_override("panel", _flat(GOLD, GOLD, 999, 0, 0))
-	check.visible = false
-	check.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	day_lbl.add_child(check)
-	check.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	check.offset_left = -20
-	check.offset_top = 0
-	check.offset_right = -2
-	check.offset_bottom = 18
-	var chl := Label.new()
-	chl.text = "✓"
-	chl.set_anchors_preset(Control.PRESET_FULL_RECT)
-	chl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	chl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	chl.add_theme_font_size_override("font_size", 13)
-	chl.add_theme_color_override("font_color", DARK)
-	chl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	check.add_child(chl)
+	if _header_font:
+		day_lbl.add_theme_font_override("font", _header_font)
+	root.add_child(day_lbl)
+
+	var frame := PanelContainer.new()
+	frame.clip_contents = false
+	frame.add_theme_stylebox_override("panel", _ui_daily_slot_flat(wide, false, false, d == 7))
+	frame.custom_minimum_size = Vector2(UI_DAILY_CONTENT_W, UI_DAILY_SLOT_WIDE_H) if wide else Vector2(UI_DAILY_SLOT_W, UI_DAILY_SLOT_H)
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	root.add_child(frame)
+
+	# один ребёнок PanelContainer: контент + галочка оверлеем
+	var wrap := Control.new()
+	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrap.clip_contents = true
+	frame.add_child(wrap)
+
+	var ic := TextureRect.new()
+	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.custom_minimum_size = Vector2(UI_DAILY_ICON_WIDE, UI_DAILY_ICON_WIDE) if wide else Vector2(UI_DAILY_ICON, UI_DAILY_ICON)
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
 	var val := Label.new()
 	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	val.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_lab(val, F_SMALL, TXT)
 	val.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
 	if wide:
 		var hb := HBoxContainer.new()
-		hb.add_theme_constant_override("separation", 14)
-		frame.add_child(hb)
+		hb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		hb.offset_left = 8; hb.offset_right = -8
+		hb.offset_top = 6; hb.offset_bottom = -6
+		hb.add_theme_constant_override("separation", 12)
+		hb.alignment = BoxContainer.ALIGNMENT_CENTER
+		wrap.add_child(hb)
 		hb.add_child(ic)
-		var tv := VBoxContainer.new()
-		tv.add_theme_constant_override("separation", 2)
-		tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		tv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		day_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		var tvb := VBoxContainer.new()
+		tvb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tvb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		tvb.add_theme_constant_override("separation", 2)
+		hb.add_child(tvb)
 		val.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		tv.add_child(day_lbl)
-		tv.add_child(val)
-		hb.add_child(tv)
+		val.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		val.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		tvb.add_child(val)
 	else:
-		var vb := VBoxContainer.new()
-		vb.add_theme_constant_override("separation", 4)
-		frame.add_child(vb)
-		vb.add_child(day_lbl)
-		vb.add_child(ic)
-		vb.add_child(val)
-	_daily_slots[d] = {"frame": frame, "val": val, "day_lbl": day_lbl, "icon": ic, "check": check}
-	return frame
+		var inner := VBoxContainer.new()
+		inner.set_anchors_preset(Control.PRESET_FULL_RECT)
+		inner.add_theme_constant_override("separation", 6)
+		inner.alignment = BoxContainer.ALIGNMENT_CENTER
+		wrap.add_child(inner)
+		inner.add_child(ic)
+		inner.add_child(val)
+
+	# зелёная галочка Icons-9 — правый нижний угол слота
+	var check := TextureRect.new()
+	check.visible = false
+	check.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	check.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	check.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	if _ui_tex_check:
+		check.texture = _ui_tex_check
+	wrap.add_child(check)
+	check.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	check.offset_left = -UI_CHECK_SIZE - 2.0
+	check.offset_top = -UI_CHECK_SIZE - 2.0
+	check.offset_right = -2.0
+	check.offset_bottom = -2.0
+
+	_daily_slots[d] = {"root": root, "frame": frame, "val": val, "day_lbl": day_lbl, "icon": ic, "check": check}
+	return root
 
 # Живые числа + состояния слотов (пересчёт при каждом открытии/клейме)
 func _refresh_daily() -> void:
@@ -2998,13 +4858,18 @@ func _refresh_daily() -> void:
 			continue
 		var r: Dictionary = Game.daily_reward_preview(d)
 		var parts: PackedStringArray = []
+		# без «+»: «Имя» / «N Золота» / «B Черепов»
 		if String(r.hero) != "":
-			parts.append("%s прибывает!" % Game.ALLIES[r.hero].name)
+			parts.append(String(Game.ALLIES[r.hero].name))
 		if float(r.gold) > 0.0:
-			parts.append("+%s" % fmt(float(r.gold)))
+			parts.append("%s Золота" % fmt(float(r.gold)))
 		if int(r.bells) > 0:
-			parts.append("+%d черепов" % int(r.bells))
-		s.val.text = "\n".join(parts)
+			parts.append("%d Черепов" % int(r.bells))
+		# гранд-финал: компактнее — имя, затем награды через «·»
+		if d == 7 and parts.size() > 1:
+			s.val.text = parts[0] + "\n" + " · ".join(parts.slice(1))
+		else:
+			s.val.text = "\n".join(parts)
 		# иконка: портрет гастролёра > череп > золото
 		if is_instance_valid(s.icon):
 			if String(r.hero) != "" and _ally_tex.has(String(r.hero)):
@@ -3017,77 +4882,167 @@ func _refresh_daily() -> void:
 		var current: bool = d == cur
 		if is_instance_valid(s.get("check")):
 			s.check.visible = claimed
-		# подпись дня: у текущего — «СЕГОДНЯ»
+			s.check.modulate = Color.WHITE
+		# подпись: СЕГОДНЯ только если приз уже можно забрать; иначе у текущего слота — ЗАВТРА
 		if current:
-			s.day_lbl.text = "Гранд-финал · СЕГОДНЯ" if d == 7 else "СЕГОДНЯ"
-			s.day_lbl.add_theme_color_override("font_color", GOLD)
+			if can:
+				s.day_lbl.text = "Гранд-финал · СЕГОДНЯ" if d == 7 else "СЕГОДНЯ"
+				s.day_lbl.add_theme_color_override("font_color", GOLD)
+			else:
+				s.day_lbl.text = "Гранд-финал · ЗАВТРА" if d == 7 else "ЗАВТРА"
+				s.day_lbl.add_theme_color_override("font_color", UI_PURPLE)
 		else:
 			s.day_lbl.text = "Гранд-финал" if d == 7 else "День %d" % d
-			s.day_lbl.add_theme_color_override("font_color", GOLD if d == 7 else MUTED)
-		# Гранд-финал — тёплый золотой тинт, остальные — обычная поверхность
-		var bg: Color = Color("#312508") if d == 7 else SURF
-		var border: Color = GOLD if current else (Color("#b8942f") if d == 7 else SURF_BORDER)
-		s.frame.add_theme_stylebox_override("panel", _flat(bg, border, 12, 3 if current else 2, 8))
-		s.frame.modulate = Color(0.45, 0.45, 0.45) if claimed else (Color.WHITE if current else Color(0.8, 0.8, 0.8))
-		# мягкий пульс текущего слота
+			s.day_lbl.add_theme_color_override("font_color", MUTED if claimed else (GOLD if d == 7 else MUTED))
+		if _header_font:
+			s.day_lbl.add_theme_font_override("font", _header_font)
+		# flat-слот по состоянию
+		s.frame.modulate = Color.WHITE
+		s.frame.add_theme_stylebox_override("panel", _ui_daily_slot_flat(d == 7, claimed, current, d == 7))
+		if is_instance_valid(s.icon):
+			s.icon.modulate = Color(0.55, 0.55, 0.6) if claimed else Color.WHITE
+		s.val.modulate = Color(0.65, 0.65, 0.7) if claimed else Color.WHITE
+		# мягкий пульс текущего слота (вся колонка: подпись + рамка)
+		var pulse_target: Control = s.get("root", s.frame) as Control
 		var tw = s.get("pulse")
 		if current and can:
 			if tw == null or not (tw as Tween).is_valid():
-				s.frame.pivot_offset = s.frame.custom_minimum_size * 0.5
-				var t2: Tween = (s.frame as Control).create_tween().set_loops()
-				t2.tween_property(s.frame, "scale", Vector2(1.02, 1.02), 0.55).set_trans(Tween.TRANS_SINE)
-				t2.tween_property(s.frame, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
+				pulse_target.pivot_offset = pulse_target.size * 0.5
+				var t2: Tween = pulse_target.create_tween().set_loops()
+				t2.tween_property(pulse_target, "scale", Vector2(1.02, 1.02), 0.55).set_trans(Tween.TRANS_SINE)
+				t2.tween_property(pulse_target, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
 				s["pulse"] = t2
 		else:
 			if tw != null and (tw as Tween).is_valid():
 				(tw as Tween).kill()
 			s["pulse"] = null
-			s.frame.scale = Vector2.ONE
-	# кнопка живёт только когда есть что забрать; иначе — тихая строка
-	if is_instance_valid(_daily_claim_btn):
-		_daily_claim_btn.visible = can
-		_daily_claim_btn.disabled = not can
-		_daily_claim_btn.text = "Забрать"
+			pulse_target.scale = Vector2.ONE
+	_refresh_daily_footer()
+
+
+func _refresh_daily_footer() -> void:
+	## Кнопка всегда на месте: «Забрать» или неактивный таймер — высота модалки не прыгает.
+	var can: bool = Game.daily_available() and not _daily_claiming
 	if is_instance_valid(_daily_next_lbl):
-		_daily_next_lbl.visible = not can
-		_daily_next_lbl.text = "Приходи завтра — готовится День %d!" % cur
+		_daily_next_lbl.visible = true
+		_daily_next_lbl.text = "Приходи завтра за новыми наградами!"
+	if not is_instance_valid(_daily_claim_btn):
+		return
+	_daily_claim_btn.visible = true
+	_daily_claim_btn.disabled = not can
+	if Game.daily_available() and not _daily_claiming:
+		_daily_claim_btn.text = "Забрать"
+	else:
+		_daily_claim_btn.text = _fmt_secs_hms(Game.secs_until_daily())
+
+
+func _daily_slot_center(d: int) -> Vector2:
+	if _daily_slots.has(d) and is_instance_valid(_daily_slots[d].get("frame")):
+		return _global_center(_daily_slots[d].frame)
+	if is_instance_valid(_daily_claim_btn):
+		return _global_center(_daily_claim_btn)
+	return Vector2.ZERO
+
+
+func _daily_celebrate_claim(d: int) -> void:
+	if not _daily_slots.has(d):
+		return
+	var s: Dictionary = _daily_slots[d]
+	var frame: Control = s.get("frame")
+	if is_instance_valid(frame):
+		_frame_pop(frame)
+		frame.pivot_offset = frame.size * 0.5
+		frame.scale = Vector2(1.06, 1.06)
+		frame.create_tween().tween_property(frame, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	var check: Control = s.get("check")
+	if is_instance_valid(check):
+		check.visible = true
+		check.pivot_offset = check.size * 0.5
+		check.scale = Vector2(0.25, 0.25)
+		check.modulate = Color(1, 1, 1, 0)
+		var tw := check.create_tween()
+		tw.tween_property(check, "modulate", Color.WHITE, 0.1)
+		tw.parallel().tween_property(check, "scale", Vector2(1.2, 1.2), 0.24).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_property(check, "scale", Vector2.ONE, 0.12)
+
+
+func _daily_play_open_fx() -> void:
+	## Лёгкий каскад слотов при открытии — органично к pop модалки.
+	if _daily_slots.is_empty():
+		return
+	for d in range(1, 8):
+		if not _daily_slots.has(d):
+			continue
+		var root: Control = _daily_slots[d].get("root")
+		if not is_instance_valid(root):
+			continue
+		root.pivot_offset = root.size * 0.5
+		root.modulate.a = 0.0
+		root.scale = Vector2(0.88, 0.88)
+		var delay: float = 0.04 * float(d - 1)
+		var tw := root.create_tween()
+		tw.tween_interval(delay)
+		tw.tween_property(root, "modulate:a", 1.0, 0.14)
+		tw.parallel().tween_property(root, "scale", Vector2.ONE, 0.26).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func _refresh_daily_btn() -> void:
-	if not is_instance_valid(_daily_btn):
+	# сайдбар Афиши: виден после знакомства; footer = таймер или «Забери!»
+	var unlocked: bool = _daily_intro_seen or (_tut_done and Game.daily_claims > 0)
+	_side_slot_set_visible(_side_afisha, unlocked)
+	if _side_afisha.is_empty() or not is_instance_valid(_side_afisha.get("foot")):
 		return
-	_daily_btn.text = "ДЕНЬ %d" % Game.daily_day
-	_daily_btn.visible = _tut_done and Game.daily_claims > 0 or _daily_intro_seen
-	var avail: bool = Game.daily_available() and _daily_intro_seen
+	var foot: Label = _side_afisha.foot
+	var btn: Control = _side_afisha.btn
+	var avail: bool = Game.daily_available() and unlocked
 	if avail:
+		foot.text = "Забери!"
+		foot.add_theme_color_override("font_color", GOLD)
 		if _daily_btn_tw == null or not _daily_btn_tw.is_valid():
-			_daily_btn_tw = _daily_btn.create_tween().set_loops()
-			_daily_btn_tw.tween_property(_daily_btn, "modulate", Color(1.4, 1.25, 0.8), 0.55).set_trans(Tween.TRANS_SINE)
-			_daily_btn_tw.tween_property(_daily_btn, "modulate", Color(1, 1, 1), 0.55).set_trans(Tween.TRANS_SINE)
+			btn.pivot_offset = btn.size * 0.5
+			_daily_btn_tw = btn.create_tween().set_loops()
+			_daily_btn_tw.tween_property(btn, "modulate", Color(1.35, 1.2, 0.85), 0.55).set_trans(Tween.TRANS_SINE)
+			_daily_btn_tw.tween_property(btn, "modulate", Color(1, 1, 1), 0.55).set_trans(Tween.TRANS_SINE)
 	else:
+		foot.text = _fmt_secs_hms(Game.secs_until_daily()) if unlocked else ""
+		foot.add_theme_color_override("font_color", SIDE_TIMER)
 		if _daily_btn_tw and _daily_btn_tw.is_valid():
 			_daily_btn_tw.kill()
 		_daily_btn_tw = null
-		_daily_btn.modulate = Color(1, 1, 1)
+		if is_instance_valid(btn):
+			btn.modulate = Color.WHITE
 
 func _open_daily() -> void:
 	if not is_instance_valid(_daily_panel) or _daily_panel.visible:
 		return
+	_bark_hide_for_modal()
+	_daily_claiming = false
 	_refresh_daily()
 	_pop_open(_daily_panel, _daily_box)   # без паузы: полёты наград живут на Main
+	# размеры слотов после layout — каскад на следующем кадре
+	get_tree().process_frame.connect(_daily_play_open_fx, CONNECT_ONE_SHOT)
 
 func _close_daily() -> void:
 	if not is_instance_valid(_daily_panel):
 		return
+	_daily_claiming = false
 	_pop_close(_daily_panel, _daily_box)
 
 func _on_daily_claim() -> void:
+	if _daily_claiming or not Game.daily_available():
+		return
+	var day_now: int = Game.daily_day
+	var from: Vector2 = _daily_slot_center(day_now)
+	_daily_claiming = true
+	_refresh_daily_footer()
 	var r: Dictionary = Game.claim_daily()
 	if r.is_empty():
+		_daily_claiming = false
+		_refresh_daily_footer()
 		return
 	if float(r.gold) > 0.0 and is_instance_valid(_gold_label):
-		_fly_coins(_global_center(_daily_claim_btn), _global_center(_gold_label), 14, GOLD, _gold_tex, _gold_icon, 40)
+		_fly_coins(from, _global_center(_gold_label), 14, GOLD, _gold_tex, _gold_icon, 40)
 	if int(r.bells) > 0 and is_instance_valid(_skull_icon_top):
-		_fly_coins(_global_center(_daily_claim_btn), _global_center(_skull_icon_top), 8, Color("#cdbfd6"), _skull_tex, _skull_icon_top, 41)
+		_fly_coins(from, _global_center(_skull_icon_top), 8, Color("#cdbfd6"), _skull_tex, _skull_icon_top, 41)
 	if String(r.hero) != "":
 		_build_cards()   # гастролёр прибыл — карточка оживает
 		_refresh()
@@ -3095,8 +5050,12 @@ func _on_daily_claim() -> void:
 		if w.has("frame"):
 			_frame_pop(w.frame)
 	_refresh_daily()
+	_daily_celebrate_claim(day_now)
 	_refresh_daily_btn()
-	get_tree().create_timer(1.0).timeout.connect(_close_daily)
+	# модалку не закрываем: кнопка → таймер, лут долетает на глазах
+	get_tree().create_timer(0.55).timeout.connect(func():
+		_daily_claiming = false
+		_refresh_daily_footer())
 	get_tree().create_timer(1.8).timeout.connect(_maybe_push_ask)   # пуш-аск после подарка
 
 # Автопоказ: старт сессии / после оффлайн-попапа. Не дёргает во время туториала,
@@ -3115,17 +5074,31 @@ func _maybe_show_daily() -> void:
 	_daily_shown_session = true
 	_open_daily()
 
-# Первое знакомство: после первой победы над боссом
-func _maybe_daily_intro() -> void:
-	if _daily_intro_seen or not _tut_done:
+# Сайдбар Афиши после 1-го босса (без авто-модалки)
+func _unlock_daily_sidebar() -> void:
+	if not _tut_done:
+		return
+	if not _daily_intro_seen:
+		_daily_intro_seen = true
+		_save_settings()
+	_refresh_daily_btn()
+
+
+# Авто-модалка Афиши со 2-го босса (разнести с первым пиком)
+func _maybe_daily_auto_modal() -> void:
+	if not _tut_done or _daily_shown_session:
 		return
 	if not Game.daily_available():
 		return
-	_daily_intro_seen = true
+	if not _daily_intro_seen:
+		_unlock_daily_sidebar()
 	_daily_shown_session = true
-	_save_settings()
-	_refresh_daily_btn()
-	get_tree().create_timer(1.5).timeout.connect(_open_daily)   # после баннера победы
+	get_tree().create_timer(1.5).timeout.connect(_open_daily)
+
+
+# Первое знакомство (legacy): сайдбар; модалку не форсим здесь
+func _maybe_daily_intro() -> void:
+	_unlock_daily_sidebar()
 
 
 # --- Туториал первой сессии --------------------------------------------------
@@ -3138,7 +5111,7 @@ const TUT_STEPS := [
 
 func _build_tutorial() -> void:
 	_tut_layer = CanvasLayer.new()
-	_tut_layer.layer = 40   # выше игры, ниже модалок
+	_tut_layer.layer = UI_Z_TUT
 	add_child(_tut_layer)
 	_tut_rect = ColorRect.new()
 	_tut_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -3178,7 +5151,7 @@ func _build_tutorial() -> void:
 	nb.text = "Далее →"
 	nb.focus_mode = Control.FOCUS_NONE
 	nb.add_theme_font_size_override("font_size", F_SUB)
-	_style_button(nb, WOOD, WOOD_BORDER, GOLD)
+	_btn_hud(nb, "primary")
 	nb.pressed.connect(_tut_advance)
 	row.add_child(nb)
 
@@ -3188,9 +5161,10 @@ func _start_tutorial() -> void:
 	_tut_step = 0
 	_tut_taps = 0
 	_tut_shown = false
+	_tut_bubble_locked = false
 	_tut_rect.visible = false
 	_tut_bubble.visible = false
-	_tut_show_step()   # текст; показ — в _process_tutorial, когда precond выполнен
+	# показ — в _process_tutorial, когда precond выполнен (шаг 0: сразу)
 
 # Условие появления коачмарка шага (действие реально возможно)
 func _tut_precond() -> bool:
@@ -3201,24 +5175,41 @@ func _tut_precond() -> bool:
 		3: return Game.punk_ready()                                    # панк заряжен
 	return true
 
+func _tut_kill_anim() -> void:
+	if _tut_anim_tw != null and _tut_anim_tw.is_valid():
+		_tut_anim_tw.kill()
+	_tut_anim_tw = null
+
+
 func _tut_set_shown(on: bool) -> void:
+	## Тот же язык, что _pop_open/_pop_close: fade 0.12 + scale 0.72↔1 BACK на бабле.
 	if not (is_instance_valid(_tut_rect) and is_instance_valid(_tut_bubble)):
 		return
+	_tut_kill_anim()
 	if on:
 		_tut_rect.visible = true
 		_tut_bubble.visible = true
-		var tw := create_tween()
-		tw.set_parallel(true)
-		tw.tween_property(_tut_rect, "modulate:a", 1.0, 0.25)
-		tw.tween_property(_tut_bubble, "modulate:a", 1.0, 0.25)
+		_tut_layout_bubble(false)
+		_tut_rect.modulate.a = 0.0
+		_tut_bubble.modulate.a = 0.0
+		_tut_bubble.pivot_offset = _tut_bubble.size * 0.5
+		_tut_bubble.scale = Vector2(0.72, 0.72)
+		_tut_anim_tw = create_tween().set_parallel(true)
+		_tut_anim_tw.tween_property(_tut_rect, "modulate:a", 1.0, 0.12)
+		_tut_anim_tw.tween_property(_tut_bubble, "modulate:a", 1.0, 0.12)
+		_tut_anim_tw.tween_property(_tut_bubble, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	else:
-		var tw := create_tween()
-		tw.set_parallel(true)
-		tw.tween_property(_tut_rect, "modulate:a", 0.0, 0.2)
-		tw.tween_property(_tut_bubble, "modulate:a", 0.0, 0.2)
-		tw.chain().tween_callback(func():
-			if is_instance_valid(_tut_rect): _tut_rect.visible = false
-			if is_instance_valid(_tut_bubble): _tut_bubble.visible = false)
+		_tut_bubble.pivot_offset = _tut_bubble.size * 0.5
+		_tut_anim_tw = create_tween().set_parallel(true)
+		_tut_anim_tw.tween_property(_tut_rect, "modulate:a", 0.0, 0.12)
+		_tut_anim_tw.tween_property(_tut_bubble, "modulate:a", 0.0, 0.12)
+		_tut_anim_tw.tween_property(_tut_bubble, "scale", Vector2(0.72, 0.72), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+		_tut_anim_tw.chain().tween_callback(func():
+			if is_instance_valid(_tut_rect):
+				_tut_rect.visible = false
+			if is_instance_valid(_tut_bubble):
+				_tut_bubble.visible = false
+				_tut_bubble.scale = Vector2.ONE)
 
 func _tut_show_step() -> void:
 	if _tut_step < 0 or _tut_step >= TUT_STEPS.size():
@@ -3231,25 +5222,40 @@ func _tut_show_step() -> void:
 
 func _tut_advance() -> void:
 	_tut_step += 1
+	_tut_shown = false
+	_tut_bubble_locked = false
+	_tut_kill_anim()
+	# Жёсткий срез между шагами — без flash текста следующего; pop будет на показе
+	if is_instance_valid(_tut_rect):
+		_tut_rect.visible = false
+		_tut_rect.modulate.a = 0.0
+	if is_instance_valid(_tut_bubble):
+		_tut_bubble.visible = false
+		_tut_bubble.modulate.a = 0.0
+		_tut_bubble.scale = Vector2.ONE
 	if _tut_step >= TUT_STEPS.size():
 		_tut_finish()
-	else:
-		_tut_show_step()
+	# текст/аналитика шага — только когда precond выполнен (_process_tutorial)
 
 func _tut_finish() -> void:
 	_tut_step = -1
 	_tut_done = true
+	_tut_shown = false
+	_tut_bubble_locked = false
 	_save_settings()
 	Analytics.report("tutorial_done")
-	get_tree().create_timer(2.6, true, false, true).timeout.connect(_maybe_klad_hint)
-	if is_instance_valid(_tut_rect):
-		var tw := create_tween()
-		tw.set_parallel(true)
-		tw.tween_property(_tut_rect, "modulate:a", 0.0, 0.25)
-		tw.tween_property(_tut_bubble, "modulate:a", 0.0, 0.25)
-		tw.chain().tween_callback(func():
-			if is_instance_valid(_tut_rect): _tut_rect.visible = false
-			if is_instance_valid(_tut_bubble): _tut_bubble.visible = false)
+	# клад-хинт больше не отсюда — после 1-го босса (+10с)
+	if is_instance_valid(_tut_bubble) and _tut_bubble.visible:
+		_tut_set_shown(false)
+	else:
+		_tut_kill_anim()
+		if is_instance_valid(_tut_rect):
+			_tut_rect.visible = false
+			_tut_rect.modulate.a = 0.0
+		if is_instance_valid(_tut_bubble):
+			_tut_bubble.visible = false
+			_tut_bubble.modulate.a = 0.0
+			_tut_bubble.scale = Vector2.ONE
 
 func _tut_target() -> Dictionary:
 	match _tut_step:
@@ -3285,11 +5291,14 @@ func _process_tutorial(delta: float) -> void:
 	if not _tut_precond():
 		if _tut_shown:
 			_tut_shown = false
+			_tut_bubble_locked = false
 			_tut_set_shown(false)
 		return
 	if not _tut_shown:
+		_tut_show_step()
 		_tut_shown = true
 		_tut_set_shown(true)
+		_tut_layout_bubble(false)
 	_tut_pulse_t += delta
 	var info := _tut_target()
 	var r: Rect2 = info.rect
@@ -3306,12 +5315,8 @@ func _process_tutorial(delta: float) -> void:
 			_tut_mat.set_shader_parameter("t_radius", 16.0)
 		_tut_mat.set_shader_parameter("pulse", 0.5 + 0.5 * sin(_tut_pulse_t * 4.0))
 	if is_instance_valid(_tut_bubble):
-		var bh: float = _tut_bubble.get_combined_minimum_size().y
-		var below: bool = (r.position.y + r.size.y * 0.5) < sw.y * 0.5
-		var by: float = (r.end.y + 26.0) if below else (r.position.y - bh - 26.0)
-		by = clampf(by, 20.0, sw.y - bh - 20.0)
-		_tut_bubble.position = Vector2(18.0, by)
-		_tut_bubble.size = Vector2(sw.x - 36.0, bh)
+		# высота от контента каждый кадр; Y якорим после первого показа (анти-тряска у панка)
+		_tut_layout_bubble(true)
 	var adv := false
 	match _tut_step:
 		0: adv = _tut_taps >= 3
@@ -3322,10 +5327,40 @@ func _process_tutorial(delta: float) -> void:
 		_tut_advance()
 
 
+func _tut_layout_bubble(keep_y: bool) -> void:
+	if not is_instance_valid(_tut_bubble):
+		return
+	var info := _tut_target()
+	var r: Rect2 = info.rect
+	var sw: Vector2 = get_viewport().get_visible_rect().size
+	var bw: float = maxf(200.0, sw.x - 36.0)
+	# ширина ДО замера высоты — иначе autowrap при width≈0 раздувает пузырь на весь экран
+	if is_instance_valid(_tut_text):
+		_tut_text.custom_minimum_size = Vector2(bw - 44.0, 0)
+	_tut_bubble.size = Vector2(bw, 1.0)
+	_tut_bubble.reset_size()
+	var bh: float = _tut_bubble.get_combined_minimum_size().y
+	bh = clampf(bh, 100.0, minf(260.0, sw.y * 0.32))
+	var by: float
+	if keep_y and _tut_bubble_locked:
+		by = clampf(_tut_bubble_pos.y, 20.0, sw.y - bh - 20.0)
+	else:
+		var below: bool = (r.position.y + r.size.y * 0.5) < sw.y * 0.5
+		by = (r.end.y + 26.0) if below else (r.position.y - bh - 26.0)
+		by = clampf(by, 20.0, sw.y - bh - 20.0)
+		_tut_bubble_locked = true
+	_tut_bubble_pos = Vector2(18.0, by)
+	_tut_bubble_size = Vector2(bw, bh)
+	_tut_bubble.position = _tut_bubble_pos
+	_tut_bubble.size = _tut_bubble_size
+	# центр масштаба для pop-анимации
+	_tut_bubble.pivot_offset = _tut_bubble.size * 0.5
+
+
 # --- Интро: элементы плавно проявляются и подъезжают --------------------------
 func _intro() -> void:
 	var items: Array = [_bgrect, get_node_or_null("%TopBar"), get_node_or_null("%Title"),
-		_arena, get_node_or_null("%TroupeRail"), _action_bar]
+		_arena, get_node_or_null("%TroupeSheet"), get_node_or_null("%TabBar")]
 	var i := 0
 	for n in items:
 		if not is_instance_valid(n):
@@ -3358,7 +5393,14 @@ func _load_settings() -> void:
 		_push_asks = int(cf.get_value("flags", "push_asks", 0))
 		_tut_done = bool(cf.get_value("flags", "tut_done", false))
 		_review_asked = bool(cf.get_value("flags", "review_asked", false))
+		_review_done = bool(cf.get_value("flags", "review_done", _review_asked))
+		_review_attempts = int(cf.get_value("flags", "review_attempts", 1 if _review_asked else 0))
+		_review_later_unix = int(cf.get_value("flags", "review_later_unix", 0))
 		_klad_hint_seen = bool(cf.get_value("flags", "klad_hint_seen", false))
+		_boss_wins = int(cf.get_value("flags", "boss_wins", -1))
+		if _boss_wins < 0:
+			# миграция: уже знали афишу — не открывать авто-модалку снова
+			_boss_wins = 2 if _daily_intro_seen else 0
 
 func _save_settings() -> void:
 	var cf := ConfigFile.new()
@@ -3370,8 +5412,12 @@ func _save_settings() -> void:
 	cf.set_value("flags", "welcome_seen", _welcome_seen)
 	cf.set_value("flags", "push_asks", _push_asks)
 	cf.set_value("flags", "tut_done", _tut_done)
-	cf.set_value("flags", "review_asked", _review_asked)
+	cf.set_value("flags", "review_asked", _review_asked or _review_done)
+	cf.set_value("flags", "review_done", _review_done)
+	cf.set_value("flags", "review_attempts", _review_attempts)
+	cf.set_value("flags", "review_later_unix", _review_later_unix)
 	cf.set_value("flags", "klad_hint_seen", _klad_hint_seen)
+	cf.set_value("flags", "boss_wins", _boss_wins)
 	cf.save(SETTINGS_PATH)
 
 func _apply_settings() -> void:
@@ -3379,21 +5425,309 @@ func _apply_settings() -> void:
 	if mi != -1:
 		AudioServer.set_bus_mute(mi, not _music_on)
 
+func _fit_debug_window_m52() -> void:
+	if Game.store_shot_mode or not OS.is_debug_build():
+		return
+	# Galaxy M52 5G: 1080×2400, 20:9. Подгоняем окно в usable area, пропорцию держим.
+	var usable := DisplayServer.screen_get_usable_rect()
+	var max_h: int = maxi(720, usable.size.y - 40)
+	var h: int = mini(2400, max_h)
+	var w: int = int(round(float(h) * 1080.0 / 2400.0))
+	if w > usable.size.x - 24:
+		w = maxi(360, usable.size.x - 24)
+		h = int(round(float(w) * 2400.0 / 1080.0))
+	DisplayServer.window_set_size(Vector2i(w, h))
+	var pos := usable.position + Vector2i(maxi(0, (usable.size.x - w) / 2), maxi(0, (usable.size.y - h) / 2))
+	DisplayServer.window_set_position(pos)
+
+
+func _input(event: InputEvent) -> void:
+	if Game.store_shot_mode or not OS.is_debug_build():
+		return
+	var rail := get_node_or_null("%TroupeRail") as ScrollContainer
+	if rail == null or not rail.visible:
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			if not mb.pressed or not _rail_has_mouse(rail):
+				return
+			var step: int = maxi(24, int(round(86.0 * maxf(mb.factor, 0.2))))
+			if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+				rail.scroll_horizontal -= step
+			else:
+				rail.scroll_horizontal += step
+			get_viewport().set_input_as_handled()
+			return
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				if _rail_has_mouse(rail):
+					_rail_drag = true
+					_rail_drag_moved = false
+					_rail_drag_origin_x = rail.get_global_mouse_position().x
+					_rail_drag_origin_scroll = rail.scroll_horizontal
+			else:
+				if _rail_drag and _rail_drag_moved:
+					get_viewport().set_input_as_handled()
+				_rail_drag = false
+				_rail_drag_moved = false
+			return
+	if event is InputEventMouseMotion and _rail_drag:
+		var dx: float = _rail_drag_origin_x - rail.get_global_mouse_position().x
+		if not _rail_drag_moved and absf(dx) < 10.0:
+			return
+		_rail_drag_moved = true
+		rail.scroll_horizontal = _rail_drag_origin_scroll + int(round(dx))
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventPanGesture and _rail_has_mouse(rail):
+		rail.scroll_horizontal += int(round((event as InputEventPanGesture).delta.x * 48.0))
+		get_viewport().set_input_as_handled()
+
+
+func _rail_has_mouse(rail: ScrollContainer) -> bool:
+	if rail == null or not rail.is_visible_in_tree():
+		return false
+	var hovered: Control = get_viewport().gui_get_hovered_control()
+	var n: Node = hovered
+	while n:
+		if n == rail:
+			return true
+		n = n.get_parent()
+	return rail.get_global_rect().has_point(rail.get_global_mouse_position())
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if Game.store_shot_mode or not OS.is_debug_build():
+		return
+	if not (event is InputEventKey) or event.echo:
+		return
+	var chord: bool = Input.is_physical_key_pressed(KEY_Z) and Input.is_physical_key_pressed(KEY_X) and Input.is_physical_key_pressed(KEY_C)
+	if chord and not _zxc_held:
+		_toggle_loc_dev()
+		get_viewport().set_input_as_handled()
+	_zxc_held = chord
+
+
+func _toggle_loc_dev() -> void:
+	if not is_instance_valid(_loc_dev_root):
+		return
+	_loc_dev_root.visible = not _loc_dev_root.visible
+
+
+func _build_loc_dev() -> void:
+	if Game.store_shot_mode or not OS.is_debug_build():
+		return
+	var layer := CanvasLayer.new()
+	layer.layer = UI_Z_TOAST
+	layer.name = "LocDevLayer"
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(layer)
+	var wrap := Control.new()
+	wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrap.visible = false
+	layer.add_child(wrap)
+	_loc_dev_root = wrap
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _flat(Color(0.07, 0.05, 0.09, 0.94), GOLD, 14, 2, 12))
+	box.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	box.anchor_left = 0.08
+	box.anchor_right = 0.92
+	box.offset_left = 0.0
+	box.offset_right = 0.0
+	box.offset_top = 132.0
+	box.mouse_filter = Control.MOUSE_FILTER_STOP
+	wrap.add_child(box)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	box.add_child(vb)
+	var cap := Label.new()
+	cap.text = "дев · арт (новые = бой; старые = архив)"
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(cap, F_SMALL, GOLD)
+	vb.add_child(cap)
+
+	var bg_l := Label.new()
+	bg_l.text = "Задник"
+	_lab(bg_l, F_SMALL, MUTED)
+	vb.add_child(bg_l)
+	var opt := OptionButton.new()
+	opt.name = "LocDevOpt"
+	opt.focus_mode = Control.FOCUS_NONE
+	opt.custom_minimum_size = Vector2(0, 48)
+	opt.add_theme_font_size_override("font_size", F_SMALL)
+	_fill_dev_bg_options(opt)
+	opt.item_selected.connect(_on_dev_bg_selected)
+	vb.add_child(opt)
+	_loc_dev_opt = opt
+
+	var port_l := Label.new()
+	port_l.text = "Портреты труппы"
+	_lab(port_l, F_SMALL, MUTED)
+	vb.add_child(port_l)
+	var port := OptionButton.new()
+	port.name = "LocDevPortOpt"
+	port.focus_mode = Control.FOCUS_NONE
+	port.custom_minimum_size = Vector2(0, 48)
+	port.add_theme_font_size_override("font_size", F_SMALL)
+	port.add_item("v3 · рельс", 3)
+	port.add_item("v2 · новые", 2)
+	port.add_item("v1 · старые", 1)
+	var port_idx := 0
+	if _portrait_pack == 2:
+		port_idx = 1
+	elif _portrait_pack == 1:
+		port_idx = 2
+	port.select(port_idx)
+	port.item_selected.connect(_on_dev_portrait_selected)
+	vb.add_child(port)
+	_loc_dev_port_opt = port
+
+	var en_l := Label.new()
+	en_l.text = "Враг (превью)"
+	_lab(en_l, F_SMALL, MUTED)
+	vb.add_child(en_l)
+	var en := OptionButton.new()
+	en.name = "LocDevEnemyOpt"
+	en.focus_mode = Control.FOCUS_NONE
+	en.custom_minimum_size = Vector2(0, 48)
+	en.add_theme_font_size_override("font_size", F_SMALL)
+	_fill_dev_enemy_options(en)
+	en.item_selected.connect(_on_dev_enemy_selected)
+	vb.add_child(en)
+	_loc_dev_enemy_opt = en
+
+	var hint := Label.new()
+	hint.text = "Z+X+C — закрыть · 10 локаций в стадиях"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(hint, F_SMALL, MUTED)
+	vb.add_child(hint)
+
+
+func _fill_dev_bg_options(opt: OptionButton) -> void:
+	opt.clear()
+	opt.add_item("игра (по стадии)", 0)
+	for i in LOC_SHORT.size():
+		opt.add_item("%s · боевой" % LOC_SHORT[i], 100 + i)
+		if i < LOC_BG_V1_PATHS.size() and LOC_BG_V1_PATHS[i] != "":
+			opt.add_item("%s · архив v1" % LOC_SHORT[i], 200 + i)
+
+
+func _fill_dev_enemy_options(opt: OptionButton) -> void:
+	opt.clear()
+	opt.add_item("авто (пул локации)", 0)
+	for i in ENEMY_EXTRA_IDS.size():
+		var eid: String = ENEMY_EXTRA_IDS[i]
+		opt.add_item(ENEMY_NAMES.get(eid, eid), 1000 + i)
+
+
+func _on_dev_bg_selected(item_idx: int) -> void:
+	if not is_instance_valid(_loc_dev_opt):
+		return
+	var id: int = int(_loc_dev_opt.get_item_id(item_idx))
+	if id <= 0:
+		_loc_preview = -1
+		_bg_preview_tex = null
+		_update_enemy_visual()
+		_refresh()
+		return
+	if id >= 200:
+		var i: int = id - 200
+		_loc_preview = i
+		_bg_preview_tex = _loc_bg_v1.get(i)
+		if _bg_preview_tex == null:
+			push_warning("loc-dev: v1 bg missing for %s" % LOC_SHORT[i])
+		_apply_dev_loc_enemy(i)
+		return
+	if id >= 100:
+		var j: int = id - 100
+		_loc_preview = j
+		_bg_preview_tex = _loc_bg_v2.get(j)
+		if _bg_preview_tex == null:
+			_bg_preview_tex = _loc_bg.get(j)
+		_apply_dev_loc_enemy(j)
+
+
+func _on_dev_portrait_selected(item_idx: int) -> void:
+	if not is_instance_valid(_loc_dev_port_opt):
+		return
+	var pack: int = int(_loc_dev_port_opt.get_item_id(item_idx))
+	_apply_portrait_pack(pack, true)
+
+
+func _on_dev_enemy_selected(item_idx: int) -> void:
+	if not is_instance_valid(_loc_dev_enemy_opt):
+		return
+	var id: int = int(_loc_dev_enemy_opt.get_item_id(item_idx))
+	if id <= 0:
+		_enemy_preview_id = ""
+		_update_enemy_visual()
+		_refresh()
+		return
+	var ei: int = id - 1000
+	if ei >= 0 and ei < ENEMY_EXTRA_IDS.size():
+		_enemy_preview_id = ENEMY_EXTRA_IDS[ei]
+		_apply_dev_enemy_texture(_enemy_preview_id)
+
+
+func _apply_dev_loc_enemy(idx: int) -> void:
+	if _enemy_preview_id != "":
+		_apply_dev_enemy_texture(_enemy_preview_id)
+		return
+	var pool: Array = LOCATION_ENEMIES[idx % LOCATION_ENEMIES.size()]
+	if not pool.is_empty():
+		_apply_dev_enemy_texture(String(pool[0]))
+	else:
+		_apply_preview_bg()
+		_on_enemy_changed(Game.enemy_hp, Game.enemy_max_hp)
+		_refresh()
+
+
+func _apply_dev_enemy_texture(enemy_id: String) -> void:
+	_current_enemy = enemy_id
+	if _enemy_textures.has(enemy_id) and is_instance_valid(_enemy):
+		_enemy.texture = _enemy_textures[enemy_id]
+	elif is_instance_valid(_enemy):
+		var t: Texture2D = _try_load_tex(ENEMY_TEX_DIR + enemy_id + ".png")
+		if t:
+			_enemy_textures[enemy_id] = t
+			_enemy.texture = t
+	if is_instance_valid(_enemy):
+		_enemy.scale = Vector2.ONE
+		_enemy.modulate.a = 1.0
+	_apply_preview_bg()
+	_on_enemy_changed(Game.enemy_hp, Game.enemy_max_hp)
+	_refresh()
+
+
 func _build_settings() -> void:
-	# шестерёнка в левом верхнем углу арены (зеркально кнопке клада)
+	# шестерёнка в правом верхнем (RightCol): BloodLines icon-кнопка, без emoji/CTA
 	_gear_btn = Button.new()
-	_gear_btn.text = "⚙"
-	_gear_btn.add_theme_font_size_override("font_size", 24)
 	_gear_btn.focus_mode = Control.FOCUS_NONE
-	_gear_btn.custom_minimum_size = Vector2(46, 42)
+	_gear_btn.custom_minimum_size = Vector2(UI_GEAR_SIZE, UI_GEAR_SIZE)
 	_gear_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
-	_style_button(_gear_btn, WOOD, WOOD_BORDER, GOLD)
+	var empty := StyleBoxEmpty.new()
+	for st in ["normal", "hover", "pressed", "focus", "disabled"]:
+		_gear_btn.add_theme_stylebox_override(st, empty)
+	if _ui_tex_gear:
+		_gear_btn.icon = _ui_tex_gear
+		_gear_btn.expand_icon = true
+		_gear_btn.text = ""
+		_gear_btn.add_theme_color_override("icon_normal_color", Color.WHITE)
+		_gear_btn.add_theme_color_override("icon_pressed_color", Color(0.85, 0.78, 0.95))
+		_gear_btn.add_theme_color_override("icon_hover_color", Color(1.1, 1.05, 1.15))
+		_gear_btn.add_theme_color_override("icon_disabled_color", Color(0.5, 0.45, 0.55, 0.7))
+	else:
+		_gear_btn.text = "⚙"
+		_gear_btn.add_theme_font_size_override("font_size", 24)
+		_btn_hud(_gear_btn, "primary")
 	_gear_btn.pressed.connect(_open_settings)
 	var rc := get_node_or_null("%RightCol")
 	if rc: rc.add_child(_gear_btn)
 
 	_settings_layer = CanvasLayer.new()
-	_settings_layer.layer = 60
+	_settings_layer.layer = UI_Z_MODAL
 	_settings_layer.process_mode = Node.PROCESS_MODE_ALWAYS   # работает в паузе
 	add_child(_settings_layer)
 	_settings_panel = Control.new()
@@ -3401,7 +5735,7 @@ func _build_settings() -> void:
 	_settings_panel.visible = false
 	_settings_layer.add_child(_settings_panel)
 	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.6)
+	dim.color = Color(0, 0, 0, 0.72)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.gui_input.connect(func(e: InputEvent):
 		if e is InputEventMouseButton and e.pressed:
@@ -3412,20 +5746,18 @@ func _build_settings() -> void:
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_settings_panel.add_child(cc)
 	var box := PanelContainer.new()
-	box.add_theme_stylebox_override("panel", _flat(DARK, WOOD_BORDER, 20, 2, 28))
-	box.custom_minimum_size = Vector2(560, 0)
+	box.clip_contents = false
+	box.add_theme_stylebox_override("panel", _ui_modal_flat())
+	box.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
 	cc.add_child(box)
 	_settings_box = box
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 14)
+	vb.clip_contents = false
 	box.add_child(vb)
 
-	var title := Label.new()
-	title.text = "Настройки"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(title, F_TITLE, GOLD)
-	if _header_font: title.add_theme_font_override("font", _header_font)
-	vb.add_child(title)
+	var head := _ui_modal_title_bar("Настройки", _close_settings)
+	vb.add_child(head["root"])
 	vb.add_child(_settings_sep())
 
 	vb.add_child(_settings_toggle_row("Музыка", _music_on, _on_music_toggled))
@@ -3460,10 +5792,22 @@ func _build_settings() -> void:
 			DisplayServer.clipboard_set(Game.telemetry_text())
 			tlm.text = "Лог в буфере — вставь в чат/файл")
 		vb.add_child(tlm)
+		_fresh_btn = _settings_button("Начать с начала", SURF, false)
+		_fresh_btn.custom_minimum_size = Vector2(0, 46)
+		_fresh_btn.add_theme_font_size_override("font_size", F_SMALL)
+		_fresh_btn.modulate = Color(0.85, 0.55, 0.55)
+		_fresh_btn.pressed.connect(_on_dev_fresh_start)
+		vb.add_child(_fresh_btn)
+		var rev := _settings_button("Модалка: Оцените", SURF, false)
+		rev.custom_minimum_size = Vector2(0, 46)
+		rev.add_theme_font_size_override("font_size", F_SMALL)
+		rev.modulate = Color(0.85, 0.7, 0.95)
+		rev.pressed.connect(func():
+			if is_instance_valid(_settings_panel):
+				_settings_panel.visible = false
+			_show_review_modal(false))
+		vb.add_child(rev)
 
-	var close := _settings_button("Закрыть", WOOD, true)
-	close.pressed.connect(_close_settings)
-	vb.add_child(close)
 	# футер: кто мы + версия (полезно для саппорта)
 	var foot := Label.new()
 	foot.text = "«Панк-Рок Кликер: ХОЙ!» · v%s" % APP_VERSION
@@ -3518,21 +5862,27 @@ func _style_toggle_pill(b: Button, on: bool) -> void:
 	b.add_theme_color_override("font_pressed_color", fg)
 	b.add_theme_color_override("font_hover_color", fg)
 
-func _settings_button(text: String, bg: Color, accent: bool) -> Button:
+func _settings_button(text: String, bg: Color, preferred: bool) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.add_theme_font_size_override("font_size", F_SUB)
 	b.custom_minimum_size = Vector2(0, 56)
 	b.focus_mode = Control.FOCUS_NONE
-	_style_button(b, bg, WOOD_BORDER if accent else SURF_BORDER, GOLD if accent else TXT)
+	if UI_TEXTURE_PREVIEW and ((preferred and _ui_tex_btn_pri) or (not preferred and _ui_tex_btn_sec)):
+		_style_button_texture(b, preferred)
+	else:
+		_btn_hud(b, "primary" if preferred else "secondary")
 	return b
 
 func _open_settings() -> void:
 	if not is_instance_valid(_settings_panel):
 		return
+	_bark_hide_for_modal()
 	get_tree().paused = true
 	_reset_armed = false
+	_fresh_armed = false
 	if is_instance_valid(_reset_btn): _reset_btn.text = "Сбросить прогресс"
+	if is_instance_valid(_fresh_btn): _fresh_btn.text = "Начать с начала"
 	_pop_open(_settings_panel, _settings_box)
 
 func _close_settings() -> void:
@@ -3548,6 +5898,47 @@ func _on_dev_boost_pressed() -> void:
 	_build_cards()   # перестроить карточки под новые уровни
 	_refresh()
 	_close_settings()
+
+func _on_dev_fresh_start() -> void:
+	## Полный fresh start: сейв + онбординг-флаги → reload → welcome + туториал.
+	if not is_instance_valid(_fresh_btn):
+		return
+	if not _fresh_armed:
+		_fresh_armed = true
+		_fresh_btn.text = "Точно с нуля? Ещё раз"
+		return
+	_fresh_armed = false
+	_wipe_onboarding_flags()
+	Game.reset_progress()
+	_save_settings()
+	get_tree().paused = false
+	if is_instance_valid(_settings_panel):
+		_settings_panel.visible = false
+	get_tree().reload_current_scene()
+
+
+func _wipe_onboarding_flags() -> void:
+	_tut_done = false
+	_tut_step = -1
+	_tut_shown = false
+	_tut_taps = 0
+	_tut_bubble_locked = false
+	_welcome_seen = false
+	_daily_intro_seen = false
+	_daily_shown_session = false
+	_prestige_intro_seen = false
+	_klad_hint_seen = false
+	_review_asked = false
+	_review_done = false
+	_review_attempts = 0
+	_review_later_unix = 0
+	_session_boss_wins = 0
+	_push_asks = 0
+	_update_nudged = false
+	_first_boss_reported = false
+	_boss_wins = 0
+	_daily_claiming = false
+
 
 func _on_music_toggled(on: bool) -> void:
 	_music_on = on
@@ -3739,19 +6130,20 @@ func _flash_hp() -> void:
 	_hp_flash_tw.tween_property(_hp_flash, "color:a", 0.0, 0.16).set_ease(Tween.EASE_IN)
 
 
-# --- Полёт монет (поверх всего экрана, по дуге) ------------------------------
+# --- Полёт монет: burst→счётчик (доход) / из счётчика→цель (трата) ----------
 func _global_center(n: Control) -> Vector2:
 	return n.global_position + n.size * 0.5
 
 func _bezier(a: Vector2, b: Vector2, c: Vector2, t: float) -> Vector2:
 	return a.lerp(b, t).lerp(b.lerp(c, t), t)
 
-func _fly_coins(from_pos: Vector2, to_pos: Vector2, count: int, color: Color, tex: Texture2D = null, pulse_icon: Control = null, z: int = 0) -> void:
+func _fly_coins(from_pos: Vector2, to_pos: Vector2, count: int, color: Color, tex: Texture2D = null, pulse_icon: Control = null, z: int = 0, burst: bool = true) -> void:
 	if not is_instance_valid(_fx):
 		return
 	if tex == null:
 		tex = _gold_tex   # по умолчанию — монетка золота
-	for i in count:
+	var n: int = mini(count, 22)   # кап при спаме киллов
+	for i in n:
 		var sz: float = randf_range(16.0, 26.0)
 		var coin: Control
 		if tex != null:
@@ -3770,20 +6162,69 @@ func _fly_coins(from_pos: Vector2, to_pos: Vector2, count: int, color: Color, te
 			p.add_theme_stylebox_override("panel", sb)
 			coin = p
 		coin.size = Vector2(sz, sz)
+		coin.pivot_offset = coin.size * 0.5
+		coin.scale = Vector2.ZERO
 		coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		if z != 0:
 			coin.z_index = z   # черепа поверх монет
-		var start: Vector2 = from_pos + Vector2(randf_range(-34, 34), randf_range(-34, 34))
-		coin.position = start - coin.size * 0.5
 		_fx.add_child(coin)
-		var ctrl: Vector2 = (start + to_pos) * 0.5 + Vector2(randf_range(-90, 90), randf_range(-180, -50))
-		var dur: float = randf_range(0.45, 0.72)
-		var tw := create_tween()
-		tw.tween_interval(i * 0.018)
-		tw.tween_method(func(t: float): coin.position = _bezier(start, ctrl, to_pos, t) - coin.size * 0.5, 0.0, 1.0, dur).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-		tw.tween_callback(coin.queue_free)
+		_fly_one_loot(coin, from_pos, to_pos, i, burst)
 	if is_instance_valid(pulse_icon):
-		_pulse_icon(pulse_icon)
+		var ptw := create_tween()
+		ptw.tween_interval(0.28 if burst else 0.06)
+		ptw.tween_callback(func(): _pulse_icon(pulse_icon))
+
+
+# burst=true: pop + разлёт + home (килл/награда). burst=false: из точки (счётчик) дугой в цель (трата).
+func _fly_one_loot(coin: Control, from_pos: Vector2, to_pos: Vector2, idx: int, burst: bool = true) -> void:
+	var half: Vector2 = coin.size * 0.5
+	var jitter: float = 10.0 if burst else 6.0
+	var origin: Vector2 = from_pos + Vector2(randf_range(-jitter, jitter), randf_range(-jitter, jitter))
+	coin.position = origin - half
+	var stagger: float = idx * (0.012 if burst else 0.016)
+	var tw := create_tween()
+	tw.tween_interval(stagger)
+
+	if burst:
+		var ang: float = randf() * TAU
+		var burst_r: float = randf_range(52.0, 118.0)
+		var burst_pos: Vector2 = origin + Vector2(cos(ang), sin(ang)) * burst_r
+		burst_pos.y -= randf_range(8.0, 36.0)
+		var burst_dur: float = randf_range(0.11, 0.16)
+		var home_dur: float = randf_range(0.34, 0.48)
+		var mid: Vector2 = (burst_pos + to_pos) * 0.5 + Vector2(randf_range(-48.0, 48.0), randf_range(-90.0, -24.0))
+		tw.set_parallel(true)
+		tw.tween_property(coin, "scale", Vector2(1.2, 1.2), 0.08).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_property(coin, "position", burst_pos - half, burst_dur).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.set_parallel(false)
+		tw.set_parallel(true)
+		tw.tween_property(coin, "scale", Vector2.ONE, 0.08).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+		tw.tween_method(
+			func(t: float) -> void:
+				if is_instance_valid(coin):
+					coin.position = _bezier(burst_pos, mid, to_pos, t) - half,
+			0.0, 1.0, home_dur
+		).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+		tw.set_parallel(false)
+	else:
+		# трата: вылетают из счётчика, без взрыва
+		var mid2: Vector2 = (origin + to_pos) * 0.5 + Vector2(randf_range(-55.0, 55.0), randf_range(-70.0, 20.0))
+		var dur: float = randf_range(0.38, 0.52)
+		tw.set_parallel(true)
+		tw.tween_property(coin, "scale", Vector2(1.12, 1.12), 0.07).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_method(
+			func(t: float) -> void:
+				if is_instance_valid(coin):
+					coin.position = _bezier(origin, mid2, to_pos, t) - half,
+			0.0, 1.0, dur
+		).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
+		tw.set_parallel(false)
+		tw.tween_property(coin, "scale", Vector2.ONE, 0.05).set_trans(Tween.TRANS_SINE)
+
+	tw.tween_callback(func() -> void:
+		if is_instance_valid(coin):
+			coin.queue_free())
+
 
 # Пульс иконки-счётчика, пока летят монеты/черепа
 func _pulse_icon(ic: Control) -> void:
@@ -3798,13 +6239,18 @@ func _pulse_icon(ic: Control) -> void:
 
 # Окно «Пока тебя не было…» (золото уже начислено, окно информирует)
 func _show_offline_popup(amount: float) -> void:
-	if not is_instance_valid(_fx):
-		return
+	_bark_hide_for_modal()
+	if is_instance_valid(_offline_layer):
+		_offline_layer.queue_free()
+	_offline_layer = CanvasLayer.new()
+	_offline_layer.layer = UI_Z_MODAL
+	_offline_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_offline_layer)
 	var root := Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_fx.add_child(root)
+	_offline_layer.add_child(root)
 	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.6)
+	dim.color = Color(0, 0, 0, 0.72)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	root.add_child(dim)
@@ -3813,43 +6259,64 @@ func _show_offline_popup(amount: float) -> void:
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(cc)
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", _flat(SURF, GOLD, 16, 3, 22))
-	panel.custom_minimum_size = Vector2(460, 0)
+	panel.clip_contents = false
+	panel.add_theme_stylebox_override("panel", _ui_modal_flat())
+	panel.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
 	cc.add_child(panel)
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 14)
+	panel.add_child(vb)
 	var t := Label.new()
 	t.text = "Пока тебя не было…"
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(t, F_BODY, TXT)
-	var a := Label.new()
-	a.text = "+%s золота" % fmt(amount)
-	a.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_lab(a, F_TITLE, GOLD)
-	# ×2 за рекламу — главный оффлайн-плейсмент; обычный «Забрать» — вторичная кнопка
+	_lab(t, F_TITLE, GOLD)
+	if _header_font:
+		t.add_theme_font_override("font", _header_font)
+	vb.add_child(t)
+	var got := HBoxContainer.new()
+	got.alignment = BoxContainer.ALIGNMENT_CENTER
+	got.add_theme_constant_override("separation", 8)
+	var got_pref := Label.new()
+	got_pref.text = "Мы собрали"
+	_lab(got_pref, F_BODY, TXT)
+	got_pref.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	got.add_child(got_pref)
+	var amt_l := Label.new()
+	amt_l.text = fmt(amount)
+	_lab(amt_l, F_TITLE, GOLD)
+	if _header_font:
+		amt_l.add_theme_font_override("font", _header_font)
+	got.add_child(amt_l)
+	if _gold_tex:
+		var ic := TextureRect.new()
+		ic.texture = _gold_tex
+		ic.custom_minimum_size = Vector2(34, 34)
+		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		got.add_child(ic)
+	vb.add_child(got)
+	var hint := Label.new()
+	hint.text = "Труппа хорошо потрудилась!"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(hint, F_SUB, MUTED)
+	vb.add_child(hint)
 	_offline_amt = amount
 	_offline_root = root
 	_offline_panel = panel
-	var x2 := Button.new()
-	x2.text = "▶ Забрать ×2"
-	x2.add_theme_font_size_override("font_size", F_BODY)
-	x2.custom_minimum_size = Vector2(300, 64)
-	x2.focus_mode = Control.FOCUS_NONE
-	_style_button(x2, WOOD, WOOD_BORDER, GOLD)
-	var ok := Button.new()
-	ok.text = "Забрать"
-	ok.add_theme_font_size_override("font_size", F_SUB)
-	ok.custom_minimum_size = Vector2(220, 56)
-	ok.focus_mode = Control.FOCUS_NONE
-	_style_button(ok, SURF, SURF_BORDER, TXT)
+	var x2 := _settings_button("▶ Забрать ×2", WOOD, true)
+	x2.custom_minimum_size = Vector2(UI_DAILY_BTN_W, UI_DAILY_BTN_H)
+	var ok := _settings_button("Забрать", SURF, false)
+	ok.custom_minimum_size = Vector2(UI_DAILY_BTN_W, UI_DAILY_BTN_H)
 	x2.pressed.connect(func():
 		x2.disabled = true
 		ok.disabled = true
 		Monetization.show_rewarded("offline_x2"))
 	ok.pressed.connect(func():
 		_collect_offline(1.0))
-	vb.add_child(t); vb.add_child(a); vb.add_child(x2); vb.add_child(ok)
-	panel.add_child(vb)
+	vb.add_child(x2)
+	vb.add_child(ok)
 	_pop_open(root, panel)
 
 # Забор оффлайн-дохода (mult=2.0 после ролика) + цепочка на афишу
@@ -3863,6 +6330,9 @@ func _collect_offline(mult: float) -> void:
 			_global_center(_gold_label), 18, GOLD, _gold_tex, _gold_icon)
 	if is_instance_valid(_offline_root):
 		_pop_close_free(_offline_root, _offline_panel)
+	if is_instance_valid(_offline_layer):
+		_offline_layer.queue_free()
+	_offline_layer = null
 	_offline_root = null
 	_offline_panel = null
 	get_tree().create_timer(1.0).timeout.connect(_maybe_show_daily)
@@ -3901,20 +6371,10 @@ func _card_pop(aid: String) -> void:
 	if not w.is_empty():
 		_frame_pop(w.get("frame"))
 
-# Сочный поп карточки (герой или Клинок): пружина + вспышка, без обрезки рельсом
+# Вспышка плашки при прокачке: только modulate, клип рельса не снимаем
 func _frame_pop(f) -> void:
 	if not is_instance_valid(f):
 		return
-	var rail := get_node_or_null("%TroupeRail")
-	if rail: rail.clip_contents = false
-	f.pivot_offset = f.size * 0.5
-	f.z_index = 5
-	var st := create_tween()
-	st.tween_property(f, "scale", Vector2(1.10, 1.10), 0.09).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	st.tween_property(f, "scale", Vector2.ONE, 0.15).set_trans(Tween.TRANS_QUAD)
-	st.tween_callback(func():
-		if is_instance_valid(f): f.z_index = 0
-		if rail: rail.clip_contents = true)
 	f.modulate = Color(1.55, 1.55, 1.55, 1.0)
 	var mt := create_tween()
 	mt.tween_property(f, "modulate", Color(1, 1, 1, 1), 0.28)
@@ -3930,7 +6390,10 @@ func store_shot_clean_ui() -> void:
 	_daily_intro_seen = true
 	_prestige_intro_seen = true
 	_klad_hint_seen = true
+	_klad_watched_session = true
+	_klad_session_rehint_done = true
 	_review_asked = true
+	_review_done = true
 	_tut_step = -1
 	get_tree().paused = false
 	Game.last_offline_income = 0.0
@@ -3969,7 +6432,7 @@ func store_shot_clean_ui() -> void:
 
 func store_shot_finish_boot() -> void:
 	var items: Array = [_bgrect, get_node_or_null("%TopBar"), get_node_or_null("%Title"),
-		_arena, get_node_or_null("%TroupeRail"), _action_bar]
+		_arena, get_node_or_null("%TroupeSheet"), get_node_or_null("%TabBar")]
 	for n in items:
 		if is_instance_valid(n):
 			n.modulate.a = 1.0
@@ -3979,7 +6442,7 @@ func store_shot_set_enemy(enemy_id: String) -> void:
 	_current_enemy = enemy_id
 	if _enemy_textures.has(enemy_id) and is_instance_valid(_enemy):
 		_enemy.texture = _enemy_textures[enemy_id]
-	var li: int = (Game.location() - 1) % LOC_BG_PATHS.size()
+	var li: int = _loc_index()
 	if _loc_bg.has(li) and is_instance_valid(_bgrect):
 		_bgrect.texture = _loc_bg[li]
 	_on_enemy_changed(Game.enemy_hp, Game.enemy_max_hp)
@@ -4045,6 +6508,20 @@ func store_shot_open_daily() -> void:
 	_daily_panel.modulate.a = 1.0
 	if is_instance_valid(_daily_box):
 		_daily_box.scale = Vector2.ONE
+
+
+func store_shot_scroll_troupe(px: int) -> void:
+	var rail := get_node_or_null("%TroupeRail") as ScrollContainer
+	if rail == null:
+		return
+	await get_tree().process_frame
+	rail.scroll_horizontal = maxi(0, px)
+	rail.queue_sort()
+
+
+func store_shot_set_buy_mult(m: int) -> void:
+	# 1 / 10 / 100 / -1(MAX) — как в живой игре
+	_set_mult(m)
 
 
 func store_shot_show_bark(hid: String, line: String) -> void:
@@ -4119,7 +6596,7 @@ func trailer_upgrade_tap(n: int = 1) -> void:
 	if Game.buy_tap_n(n):
 		_refresh()
 		if is_instance_valid(_klinok_w) and _klinok_w.has("cost"):
-			_fly_coins(_global_center(_gold_label), _global_center(_klinok_w.cost), 8, GOLD)
+			_fly_coins(_global_center(_gold_label), _global_center(_klinok_w.cost), 8, GOLD, null, null, 0, false)
 
 
 func trailer_upgrade_ally(aid: String, n: int = 1) -> void:
@@ -4128,7 +6605,7 @@ func trailer_upgrade_ally(aid: String, n: int = 1) -> void:
 			break
 	_refresh()
 	if _card_widgets.has(aid) and is_instance_valid(_card_widgets[aid].get("cost")):
-		_fly_coins(_global_center(_gold_label), _global_center(_card_widgets[aid].cost), 8, GOLD)
+		_fly_coins(_global_center(_gold_label), _global_center(_card_widgets[aid].cost), 8, GOLD, null, null, 0, false)
 
 
 func trailer_show_bark(hid: String, line: String) -> void:

@@ -11,14 +11,20 @@
 - [GDD.md](GDD.md) — геймдизайн-документ
 - [LORE.md](LORE.md) — мир, труппа, боссы, локации
 - [BALANCE.md](BALANCE.md) — баланс и темп (+ симулятор `tools/sim_balance.py`)
-- [ART_SPEC.md](ART_SPEC.md) — тех-требования к арту
+- [ART_SPEC.md](ART_SPEC.md) — тех-требования к арту (+ статус v2 / бэклог)
+- [art/enemies/PIPELINE.md](art/enemies/PIPELINE.md) — пайплайн генерации противников (паспорт → chroma → приёмка)
 - [UIREF.md](UIREF.md) — разбор UI-референса
+- [UI_CANON.md](UI_CANON.md) — закон UI (раскладка, нав, токены)
+- [ROADMAP.md](ROADMAP.md) — дорожная карта и бэклог
+- [RELEASE.md](RELEASE.md) — чеклист апдейта RuStore / стор-скрины
+- [HEALTH.md](HEALTH.md) · [METRICS.md](METRICS.md) — срез здоровья и метрик
 
 ## Структура
 - `game/` — сцены и скрипты (autoload: Balance/Economy/Monetization/Game; экран `scenes/Main.tscn` + `Main.gd`)
-- `art/` — спрайты (`heroes`, `troupe`, `enemies`, `bg`), `art_in/` — исходники
+- `art/` — спрайты (`heroes`, `troupe`, `enemies` + `enemies/v2` кандидаты, `bg` + `bg/v2` паспорта); `art_in/` — исходники
+- `store/listing/` — скрины карточки RuStore (генерация `tools/store_shots.gd`; папка `store/` под `.gdignore`)
 - `addons/GodotAndroidYandexAds/` — плагин рекламы
-- `tools/` — симулятор баланса, рендер скриншота сцены
+- `tools/` — симулятор баланса, стор-скрины, прочий тулчейн
 
 ## Сборка под Android (кратко)
 Нужны: Godot 4.6.1, JDK 17, Android SDK (build-tools 34, platform-tools, platform 34), debug keystore.

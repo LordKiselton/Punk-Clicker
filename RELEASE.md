@@ -11,6 +11,56 @@
 
 ---
 
+## Чеклист релизного апдейта (APK → RuStore)
+
+Актуально с **v1.0.4** (иконка DD-шут). RuStore льём **APK**, не AAB.
+
+### Версии (три места)
+1. `export_presets.cfg` — `version/code` + `version/name` (оба пресета Android / Android-AAB)
+2. `game/scenes/Main.gd` — `APP_VERSION` + `APP_VERSION_CODE`
+3. `docs/version.json` — `{ "code", "name" }` → GitHub Pages нудж
+
+**Порядок:** сначала сборка и заливка APK → модерация/публикация в RuStore → **только потом** коммит+пуш `docs/version.json` в `main`. Иначе игроки на старой версии получат нудж, пока апдейта ещё нет в сторе. Пока билд на модерации — в Pages оставлять предыдущий `code`.
+
+### Иконка
+- В билде: `res://icon/icon_512.png`, `icon_192.png`, `icon_fg.png` (432), `icon_bg.png` (432) — см. [ART_SPEC.md](ART_SPEC.md)
+- В сторе и в APK менять **вместе** (один апдейт). Package/подпись те же → старые игроки не теряют приложение, только картинка на лаунчере после апдейта
+- Исходник арта: `store/icons/` (не в `res://icon/`)
+
+### Скриншоты карточки (RuStore)
+Актуально с **2026-08-26**: набор **15** портретных кадров **1080×1920** (9:16) в `store/listing/` (`01_…` … `15_…` — early/mid, локации, боссы, ХОЙ, панк-раж, афиша, престиж, скролл труппы, ×N).
+
+Переген (нужен **оконный** Godot, не `--headless` — иначе dummy renderer / IMG_NULL):
+
+```text
+Godot_v4.6.1-stable_win64_console.exe --path C:\mobile-clicker res://tools/store_shots.tscn
+```
+
+Скрипт: `tools/store_shots.gd`. После смены арта локаций/UI — перегнать сет и обновить карточку в консоли RuStore.
+
+### Что не должно попасть в APK
+- Обязательны пустые **`build/.gdignore`** и **`store/.gdignore`** — иначе Godot импортирует чек-файлы/`source_*` и раздувает пакет
+- Как у `art_in/`: исходники маркетинга и временные выгрузки — вне экспорта
+- Перед заливкой в APK не должно быть `source_*`, `_icon_check`, мусора из `build/`
+
+### Сборка и preflight
+1. Env: `GODOT_ANDROID_KEYSTORE_RELEASE_PATH/USER/PASSWORD` + `JAVA_HOME` + `ANDROID_HOME` (см. memory build)
+2. `Godot 4.6.1 --headless --export-release "Android" build/balagan-release-vXXX.apk` (лог в файл; после DONE процесс может висеть на gradle daemon — APK уже готов)
+3. `aapt dump badging … | findstr package` — code/name/package
+4. `apksigner verify` + SHA-256 сертификата = как у предыдущего релиза
+5. Быстрая проверка: в zip/APK нет `source_v1` / `_icon_check`
+
+### После публикации в сторе
+- Запушить `docs/version.json` с новым `code` (Pages)
+- При смене иконки — обновить ассет в карточке RuStore, если консоль не тянет только из APK
+
+### UI-полиш (Godot MCP)
+- Конфиг: `.cursor/mcp.json` · инструкция: [GODOT_MCP.md](GODOT_MCP.md)
+- Runtime: GUI `Godot_v4.6.1-stable_win64.exe` · export APK: `_console.exe`
+- После правок UI — скрин через MCP (720×1280 минимум), финал на телефоне
+
+---
+
 ## Легенда
 - 🔴 **Блокер** — без этого нельзя опубликовать/монетизировать.
 - 🟡 **Важное** — качество/комплаенс, до релиза.

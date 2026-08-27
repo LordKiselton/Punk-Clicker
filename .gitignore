@@ -35,3 +35,24 @@ desktop.ini
 
 # --- Секреты подписи (release keystore creds) ---
 export_presets.credentials.cfg
+
+# --- Секреты аналитики ---
+.env
+
+# --- Входящие выгрузки для среза (локально) ---
+store/health_inbox/*
+.mcp/
+
+# --- Cursor / MCP runtime (не в репо) ---
+.cursor/
+mcp_bridge.gd
+_am_*.json
+
+# --- Арт-кандидаты и бэкапы (в APK не едут; пайплайн локально) ---
+art/enemies/v2/
+art/enemies/_pre_v2_bak/
+art/bg/v2/
+art/keyart/
+**/*.prev_gen.bak
+**/*.zss_grimdark.bak
+**/*.chest.bak

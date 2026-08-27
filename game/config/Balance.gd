@@ -24,11 +24,12 @@ const ENEMY_GOLD_GROWTH: float = 1.155   # рост золота за стади
 const ENEMIES_PER_STAGE: int = 10        # сколько врагов на обычной стадии
 const BOSS_EVERY: int = 5                # каждые N стадий — босс
 const BOSS_HP_MULT: float = 11.0         # множитель HP босса (босс = настоящий DPS-чек / стена)
-const LOCATION_BOSS_HP_MULT: float = 2.5 # доп. множитель ФИНАЛЬНОГО босса локации (s%50==0) — «ворота»
-const LOCATION_BOSS_BELLS_MULT: float = 2.0  # финал локации платит двойную капель черепов (праздник)
+const LOCATION_BOSS_HP_MULT: float = 2.5 # доп. множитель ворот-босса (см. LOCATION_BOSS_EVERY)
+const LOCATION_BOSS_BELLS_MULT: float = 2.0  # ворота платят двойную капель черепов (праздник)
 const BOSS_GOLD_MULT: float = 10.0       # множитель золота с босса
 const BOSS_TIMER_SEC: float = 30.0       # таймер боя с боссом
-const STAGES_PER_LOCATION: int = 50      # стадий в одной локации (фон/враги/музыка)
+const STAGES_PER_LOCATION: int = 25      # арт: фон / пул врагов / музыка
+const LOCATION_BOSS_EVERY: int = 50      # ворота сложности — ритм как при старом SPL=50 (баланс не трогаем)
 
 # --- Соратники (труппа) — idle DPS -----------------------------------------
 # Заполним при добавлении конкретных героев. Шаблон параметров на одного:
@@ -44,11 +45,35 @@ const SKILL_GOLD_HOUR_MULT: float = 3.0        # «Золотой час»: ×з
 # Заряд копится ТОЛЬКО от тапов игрока (idle/герои не заряжают) → награждает
 # активную игру. На время режима всё кратно усиливается. См. MONETIZATION.md.
 const PUNK_TAPS_TO_FULL: int = 80              # сколько тапов до полного заряда (заряжается медленнее)
-const PUNK_DURATION_SEC: float = 15.0          # длительность «беспредела»
+const PUNK_DURATION_SEC: float = 10.0          # длительность «беспредела» (было 15)
 const PUNK_DMG_MULT: float = 5.0               # ×урон (тап и герои) на обычных стадиях
 const PUNK_BOSS_DMG_MULT: float = 3.5          # ×урон панка НА БОССЕ (слабее — босс остаётся стеной)
 const PUNK_SPEED_MULT: float = 2.5             # ×скорость атаки героев (суммарный DPS ~x12)
 const PUNK_GOLD_MULT: float = 5.0              # ×золото/ресурсы
+
+# --- Комбо (только тап игрока) ---------------------------------------------
+# Ступени: UI показывает hits + ×mult. Кап ×1.50 ~на 80 хитах (дорого).
+# Одна формула везде (моб/босс/панк) — полный стек с панком.
+const COMBO_GRACE_SEC: float = 0.60
+const COMBO_TIER_HITS := [5, 15, 30, 50, 80]
+const COMBO_TIER_MULT := [1.10, 1.20, 1.30, 1.40, 1.50]
+
+
+func combo_mult_for_hits(hits: int) -> float:
+	var m: float = 1.0
+	for i in COMBO_TIER_HITS.size():
+		if hits >= int(COMBO_TIER_HITS[i]):
+			m = float(COMBO_TIER_MULT[i])
+	return m
+
+
+func combo_tier_index(hits: int) -> int:
+	# -1 = ниже первой ступени; иначе индекс в COMBO_TIER_*
+	var idx: int = -1
+	for i in COMBO_TIER_HITS.size():
+		if hits >= int(COMBO_TIER_HITS[i]):
+			idx = i
+	return idx
 
 # --- Prestige («Новая сказка») ---------------------------------------------
 const PRESTIGE_UNLOCK_STAGE: int = 50          # рекорд стадии для первого сброса

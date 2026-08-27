@@ -31,12 +31,13 @@ Game="*res://game/autoload/Game.gd"
 Notify="*res://game/autoload/Notify.gd"
 Analytics="*res://game/autoload/Analytics.gd"
 
+McpBridge="*res://mcp_bridge.gd"
 [display]
 
 window/size/viewport_width=720
 window/size/viewport_height=1280
-window/size/window_width_override=720
-window/size/window_height_override=1080
+window/size/window_width_override=540
+window/size/window_height_override=1200
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=1
