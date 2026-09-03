@@ -2,8 +2,6 @@
 
 [ext_resource type="Script" uid="uid://dvcojhsh1vww0" path="res://game/scenes/Main.gd" id="1_main"]
 [ext_resource type="Texture2D" uid="uid://bxoyxgkedqpej" path="res://art/bg/forest.png" id="2_bg"]
-[ext_resource type="Texture2D" uid="uid://calvu683h74ql" path="res://art/heroes/jester.png" id="3_enemy"]
-[ext_resource type="Texture2D" path="res://art/troupe/knight.png" id="4_hero"]
 [ext_resource type="Texture2D" path="res://art/enemies/zombie.png" id="5_zombie"]
 
 [node name="Main" type="Control"]

@@ -1,7 +1,7 @@
 # План до релиза «Балаган» (RuStore)
 
 Статус на 2026-07-03: **v1.0.0 ОТПРАВЛЕНА НА МОДЕРАЦИЮ RuStore** 🎉
-Связано: [ROADMAP.md](ROADMAP.md) · [MONETIZATION.md](MONETIZATION.md) · [BALANCE.md](BALANCE.md) · [reference-godot-android-build (memory)].
+Связано: [ROADMAP.md](ROADMAP.md) · [MONETIZATION.md](MONETIZATION.md) · [BALANCE.md](BALANCE.md) · [NOTES_DEFERRED.md](NOTES_DEFERRED.md) (RuStore SSL / Google ADC — отложено) · [reference-godot-android-build (memory)].
 
 **Как выпускались:** аккаунт RuStore — **физлицо** (у юзера есть ИП на УСН 6% с КЭП, но банковская КЭП Райффайзена — облачная, для КриптоПро не годится → физлицо сейчас, апгрейд на ИП позже через support@rustore.ru с переносом приложения; для этого получить **КЭП ИП в ФНС на Рутокен**). Загружен **релизный APK** (не AAB — RuStore для AAB требует передачу ключа через PEPK; APK несёт подпись в себе). Карточка: имя/описания/скрины/рейтинг — заполнены. **AppMetrica встроена** (ключ c884e376…, SDK 7.14.2 — строго эта версия, требование Yandex Ads 7.18.3).
 
@@ -13,7 +13,7 @@
 
 ## Чеклист релизного апдейта (APK → RuStore)
 
-Актуально с **v1.0.4** (иконка DD-шут). RuStore льём **APK**, не AAB.
+Актуально с **v1.0.5** (звук UI, барки, витрина). RuStore льём **APK**, не AAB.
 
 ### Версии (три места)
 1. `export_presets.cfg` — `version/code` + `version/name` (оба пресета Android / Android-AAB)
@@ -28,7 +28,7 @@
 - Исходник арта: `store/icons/` (не в `res://icon/`)
 
 ### Скриншоты карточки (RuStore)
-Актуально с **2026-08-26**: набор **15** портретных кадров **1080×1920** (9:16) в `store/listing/` (`01_…` … `15_…` — early/mid, локации, боссы, ХОЙ, панк-раж, афиша, престиж, скролл труппы, ×N).
+Актуально с **2026-08-27**: набор **20** портретных кадров **1080×1920** (9:16) в `store/listing/` (`01_…` … `20_…` — локации/враги РФ, комбо, панк, труппа, афиша, престиж, оффер босса, настройки, оффлайн).
 
 Переген (нужен **оконный** Godot, не `--headless` — иначе dummy renderer / IMG_NULL):
 
@@ -38,17 +38,20 @@ Godot_v4.6.1-stable_win64_console.exe --path C:\mobile-clicker res://tools/store
 
 Скрипт: `tools/store_shots.gd`. После смены арта локаций/UI — перегнать сет и обновить карточку в консоли RuStore.
 
+**Перед релизным APK — preflight:** `tools\test.bat` (headless, изолированный `user://`). Проверяет формулы экономики, контент, загрузку ресурсов/главной сцены, версии и export-фильтры. `DEV_TOOLS=false`, нет `McpBridge` в `project.godot`, exclude покрывает `store/`/`tools/`/`tests/`/candidates/`mcp_bridge.gd`.
+
 ### Что не должно попасть в APK
 - Обязательны пустые **`build/.gdignore`** и **`store/.gdignore`** — иначе Godot импортирует чек-файлы/`source_*` и раздувает пакет
 - Как у `art_in/`: исходники маркетинга и временные выгрузки — вне экспорта
 - Перед заливкой в APK не должно быть `source_*`, `_icon_check`, мусора из `build/`
 
 ### Сборка и preflight
-1. Env: `GODOT_ANDROID_KEYSTORE_RELEASE_PATH/USER/PASSWORD` + `JAVA_HOME` + `ANDROID_HOME` (см. memory build)
-2. `Godot 4.6.1 --headless --export-release "Android" build/balagan-release-vXXX.apk` (лог в файл; после DONE процесс может висеть на gradle daemon — APK уже готов)
-3. `aapt dump badging … | findstr package` — code/name/package
-4. `apksigner verify` + SHA-256 сертификата = как у предыдущего релиза
-5. Быстрая проверка: в zip/APK нет `source_v1` / `_icon_check`
+1. `tools\test.bat` — можно гонять отдельно после каждого набора правок.
+2. Env: `GODOT_ANDROID_KEYSTORE_RELEASE_PATH/USER/PASSWORD` + `JAVA_HOME` + `ANDROID_HOME` (см. memory build) — или `tools\export_release.bat`.
+3. `tools\export_release.bat` автоматически запускает preflight → экспорт → `tools/apk_audit.py`.
+4. APK-аудит требует 10 live-портретов v3 и остальные обязательные ресурсы; запрещает `tests/`, `tools/`, `store/`, архивные портреты/врагов; контролирует размер 60–90 МБ.
+5. Если `ANDROID_HOME` доступен, скрипт дополнительно запускает `apksigner verify`; иначе выдаёт предупреждение.
+6. Перед загрузкой сверить `aapt dump badging … | findstr package` — code/name/package и SHA-256 сертификата с предыдущим релизом.
 
 ### После публикации в сторе
 - Запушить `docs/version.json` с новым `code` (Pages)

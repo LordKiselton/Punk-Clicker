@@ -566,6 +566,9 @@ func _trailer_tick(delta: float) -> void:
 			punk_state_changed.emit(false, 0.0)
 	var sp: float = punk_speed_mult()
 	var dm: float = punk_dmg_mult() * boss_ad_mult()
+	# Пока режиссёр держит сцену — DPS труппы только «сок» (цифры), HP не валит
+	# ниже ~40%. Иначе на высоких уровнях враг тает до первого тапа.
+	var floor_hp: float = enemy_max_hp * 0.40
 	for id in ALLY_ORDER:
 		if ally_levels.get(id, 0) <= 0:
 			continue
@@ -575,7 +578,12 @@ func _trailer_tick(delta: float) -> void:
 			_atk_timers[id] -= atk
 			var dmg: float = ally_dps(id) * atk * dm
 			hero_attacked.emit(id, dmg)
-			_hit_enemy(dmg)
+			if trailer_hold_spawn and enemy_hp <= floor_hp:
+				continue
+			if trailer_hold_spawn:
+				dmg = minf(dmg, maxf(0.0, enemy_hp - floor_hp))
+			if dmg > 0.0:
+				_hit_enemy(dmg)
 	if is_boss and boss_time_left > 0.0 and not boss_pending_fail:
 		boss_time_left = maxf(0.0, boss_time_left - delta)
 		boss_changed.emit(true, boss_time_left)

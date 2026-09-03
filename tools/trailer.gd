@@ -1,4 +1,4 @@
-# Режиссёрские ролики: длинный (~60с) и короткий рекламный (~18с).
+# Режиссёрские ролики: длинный (~60с) и рекламный (~30с).
 # Запуск:
 #   long:  ... res://tools/trailer.tscn
 #   ad:    ... res://tools/trailer_ad.tscn
@@ -25,7 +25,7 @@ func _ready() -> void:
 	_out_mp4 = "res://store/trailer/hoy_trailer_%s.mp4" % mode
 
 	var guard := Timer.new()
-	guard.wait_time = 420.0 if mode == "long" else 180.0
+	guard.wait_time = 420.0 if mode == "long" else 240.0
 	guard.one_shot = true
 	guard.timeout.connect(func(): printerr("TRAILER_TIMEOUT"); get_tree().quit(1))
 	add_child(guard)
@@ -93,46 +93,46 @@ func _end_punk() -> void:
 	_main._punk_target = 0.0
 
 
-func _fight(enemy: String, stage: int, taps: int, hp0: float = 0.82, crit_every: int = 3, boss_t: float = -1.0, dwell: float = 0.0) -> void:
+func _fight(enemy: String, stage: int, taps: int, hp0: float = 0.82, crit_every: int = 3, boss_t: float = -1.0, dwell: float = 0.0, tap_gap: float = 0.14) -> void:
 	_main.trailer_set_scene(stage, enemy, hp0, boss_t)
 	if dwell > 0.0:
 		await _hold(dwell)
 	for i in taps:
 		_main.trailer_tap(crit_every > 0 and (i % crit_every) == 0)
-		await _hold(0.1)
+		await _hold(tap_gap)
 	_main.trailer_prepare_kill()
 	_main.trailer_tap(true)
-	await _hold(0.4)
+	await _hold(0.45)
 
 
 # secs — реальная длительность в ролике (панк в игре + кадры).
 func _punk_burst(secs: float, enemy: String, stage: int, taps: int, next_enemy: String = "", next_stage: int = -1) -> void:
-	_main.trailer_set_scene(stage, enemy, 0.9)
+	_main.trailer_set_scene(stage, enemy, 0.92)
 	Game.punk_charge = 1.0
-	_main.trailer_punk(secs + 0.6)
-	await _hold(0.35)
-	var phase_a: float = secs * (0.55 if next_enemy != "" else 0.85)
-	var step: float = maxf(0.08, phase_a / float(maxi(1, taps)))
+	_main.trailer_punk(secs + 0.8)
+	await _hold(0.4)
+	var phase_a: float = secs * (0.58 if next_enemy != "" else 0.88)
+	var step: float = maxf(0.12, phase_a / float(maxi(1, taps)))
 	for i in taps:
-		_main.trailer_tap(i % 2 == 0)
+		_main.trailer_tap(i % 3 == 0)
 		await _hold(step)
 	_main.trailer_prepare_kill()
 	_main.trailer_tap(true)
-	await _hold(0.35)
+	await _hold(0.4)
 	if next_enemy != "":
 		var st: int = next_stage if next_stage > 0 else stage + 3
-		_main.trailer_set_scene(st, next_enemy, 0.55)
-		var phase_b: float = secs * 0.35
-		var n2: int = 6
-		var step2: float = maxf(0.08, phase_b / float(n2))
+		_main.trailer_set_scene(st, next_enemy, 0.72)
+		var phase_b: float = secs * 0.32
+		var n2: int = 5
+		var step2: float = maxf(0.12, phase_b / float(n2))
 		for i in n2:
-			_main.trailer_tap(i % 2 == 0)
+			_main.trailer_tap(i % 3 == 0)
 			await _hold(step2)
 		_main.trailer_prepare_kill()
 		_main.trailer_tap(true)
 		await _hold(0.4)
 	_end_punk()
-	await _hold(0.25)
+	await _hold(0.2)
 
 
 # ---------------------------------------------------------------------------
@@ -241,43 +241,137 @@ func _direct_long() -> void:
 
 
 # ---------------------------------------------------------------------------
-# Короткий рекламный (~17с): Шут орёт → ХОЙ → сочные куски.
+# Рекламный (~30с): прогрессия локаций как в игре, без модалок и затемнений.
+# Комбо копится сквозь ролик. Враги живут до режиссёрского добивания.
 # ---------------------------------------------------------------------------
 func _direct_ad() -> void:
-	_boot_party()
+	_boot_party_ad()
 
-	# Шут в лицо + ХОЙ!
-	_main.trailer_set_scene(7, "faerie", 0.95)
+	# 0–1.8: Лес · хук «ХОЙ!» (игра видна, без дима)
+	_main.trailer_set_scene(8, "faerie", 0.94)
 	_main.trailer_jester_open()
-	await _hold(2.4)
+	await _hold(1.8)
 	_main.trailer_jester_close()
 
-	# Сразу механика
+	# 1.8–3.0: механика крика
 	_main.store_shot_hoy_listen()
-	await _hold(1.4)
+	await _hold(1.2)
 	_main._show_listen_overlay(false)
 	_main._punk_listening = false
 
-	# Панк на фее/грибе
-	await _punk_burst(4.0, "faerie", 7, 9, "shroom", 12)
+	# 3.0–5.8: Лес · вервольф
+	await _fight("werewolf", 14, 9, 0.88, 4, -1.0, 0.4, 0.15)
 
-	# Банши под таймером
-	_main.trailer_set_scene(160, "banshee", 0.65, 6.0)
-	await _hold(0.35)
-	for i in 7:
-		_main.trailer_tap(i % 2 == 0)
-		await _hold(0.1)
+	# 5.8–9.4: панк · Подъезд (домовой → полтер) — соседние стадии одной локации
+	_party_band(1)
+	await _punk_burst(3.4, "domovoi", 32, 7, "polter_neighbor", 38)
+
+	# 9.4–12.2: Погост · скелет
+	_party_band(2)
+	await _fight("skeleton", 58, 8, 0.86, 4, -1.0, 0.45, 0.15)
+
+	# 12.2–14.8: Двор · кобольд
+	await _fight("kobold_pickpocket", 82, 7, 0.84, 4, -1.0, 0.4, 0.15)
+
+	# 14.8–17.5: Трактир · тролль
+	_party_band(3)
+	await _fight("troll", 108, 7, 0.84, 3, -1.0, 0.4, 0.15)
+
+	# 17.5–21.2: панк · 24/7 (суккуб → вурдалак)
+	await _punk_burst(3.4, "succubus_cashier", 132, 7, "wurdulak", 138)
+
+	# 21.2–24.2: Город · гарпия
+	_party_band(4)
+	await _fight("harpy_conductor", 168, 9, 0.86, 4, 12.0, 0.45, 0.15)
+
+	# 24.2–26.8: Фанера · медуза
+	await _fight("medusa_makeup", 210, 7, 0.84, 3, -1.0, 0.35, 0.15)
+
+	# 26.8–30.2: Замок · вампир — жирный финал
+	_finale_party_ad()
+	_main.trailer_set_scene(232, "vampire", 0.9)
+	_main.trailer_show_bark("jester", "ХОЙ — это не слово, это диагноз.")
+	await _hold(0.65)
+	for i in 11:
+		_main.trailer_tap(i % 3 == 0)
+		await _hold(0.15)
 	_main.trailer_prepare_kill()
 	_main.trailer_tap(true)
-	await _hold(0.4)
+	await _hold(0.7)
 
-	# Панк на вампире
-	await _punk_burst(3.8, "vampire", 205, 9)
 
-	# Финал-холд (без лого)
-	_main.trailer_set_scene(62, "emoghost", 0.95)
-	_main.trailer_show_bark("jester", "ХОЙ — это не слово, это диагноз.")
-	await _hold(2.0)
+func _boot_party_ad() -> void:
+	Game.tap_level = 10
+	for id in Game.ALLY_ORDER:
+		Game.ally_levels[id] = 0
+	Game.ally_levels["knight"] = 8
+	Game.ally_levels["ratrogue"] = 5
+	Game.ally_levels["bard"] = 3
+	Economy.gold = 6000.0
+	Economy.bells = 20
+	Game.punk_charge = 1.0
+	Game.combo_hits = 0
+	Game.combo_timer = 0.0
+
+
+func _party_band(band: int) -> void:
+	# 1 подъезд · 2 погост/двор · 3 трактир/24·7 · 4 город/фанера
+	match band:
+		1:
+			Game.tap_level = 14
+			Game.ally_levels["knight"] = 12
+			Game.ally_levels["ratrogue"] = 9
+			Game.ally_levels["bard"] = 6
+			Game.ally_levels["blacksmith"] = 3
+			Economy.gold = 12000.0
+		2:
+			Game.tap_level = 18
+			Game.ally_levels["knight"] = 16
+			Game.ally_levels["ratrogue"] = 13
+			Game.ally_levels["bard"] = 10
+			Game.ally_levels["blacksmith"] = 7
+			Game.ally_levels["alchemist"] = 4
+			Economy.gold = 22000.0
+		3:
+			Game.tap_level = 22
+			Game.ally_levels["knight"] = 20
+			Game.ally_levels["ratrogue"] = 17
+			Game.ally_levels["bard"] = 14
+			Game.ally_levels["blacksmith"] = 11
+			Game.ally_levels["alchemist"] = 8
+			Game.ally_levels["hunter"] = 5
+			Economy.gold = 38000.0
+		_:
+			Game.tap_level = 28
+			Game.ally_levels["knight"] = 26
+			Game.ally_levels["ratrogue"] = 22
+			Game.ally_levels["bard"] = 18
+			Game.ally_levels["blacksmith"] = 15
+			Game.ally_levels["alchemist"] = 12
+			Game.ally_levels["hunter"] = 9
+			Game.ally_levels["witch"] = 6
+			Game.ally_levels["jester"] = 3
+			Economy.gold = 62000.0
+			Economy.bells = 120
+	_main._refresh()
+
+
+func _finale_party_ad() -> void:
+	Game.tap_level = 34
+	Game.ally_levels["knight"] = 32
+	Game.ally_levels["ratrogue"] = 28
+	Game.ally_levels["bard"] = 24
+	Game.ally_levels["blacksmith"] = 20
+	Game.ally_levels["alchemist"] = 16
+	Game.ally_levels["hunter"] = 13
+	Game.ally_levels["witch"] = 10
+	Game.ally_levels["jester"] = 7
+	Game.ally_levels["berserker"] = 4
+	Game.ally_levels["necromancer"] = 2
+	Economy.gold = 92000.0
+	Economy.bells = 280
+	Game.punk_charge = 0.85
+	_main._refresh()
 
 
 func _hold(sec: float) -> void:

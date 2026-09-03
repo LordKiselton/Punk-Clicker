@@ -1,18 +1,20 @@
-# Скриншоты для карточки RuStore — 15 кадров, 9:16 портрет.
-# Формат: 1080×1920 = 9:16 (НЕ 16:9).
-# Запуск:
+# Скриншоты для карточки RuStore — портрет 9:16 (телефон; НЕ альбом 16:9).
+# Формат: 1080×1920. OVERWRITE=false → не трогает уже лежащие PNG.
+# Запуск (оконный Godot, НЕ --headless — иначе dummy renderer / IMG_NULL):
 #   C:\Godot461\Godot_v4.6.1-stable_win64_console.exe --path C:\mobile-clicker res://tools/store_shots.tscn
 extends Node
 
 const SHOT_SIZE := Vector2i(1080, 1920)
 const OUT_DIR := "res://store/listing/"
 const FRAME_WAIT := 40
+const OVERWRITE := false   # false = дописывать только отсутствующие файлы
 
 var _sv: SubViewport
 var _main: Node
 
-# Локации: 1–50 Лес · 51–100 Погост · 101–150 Трактир · 151–200 Город · 201+ Замок
-# Босс: каждая 5-я стадия. Ранний / мид / разные враги / скролл труппы / xN.
+# Локации (SPL=25): 1–25 Лес · 26–50 Подъезд · 51–75 Погост · 76–100 Двор ·
+# 101–125 Трактир · 126–150 24/7 · 151–175 Город · 176–200 Неткафе ·
+# 201–225 Фанера · 226+ Замок. Ворот-босс: stage % 50 == 0.
 const SHOTS: Array[Dictionary] = [
 	{
 		# 01 · Старт · Лес
@@ -42,142 +44,237 @@ const SHOTS: Array[Dictionary] = [
 		"scroll": 0,
 	},
 	{
-		# 03 · Ранний босс · Лес
-		"file": "03_early_boss.png",
+		# 03 · Ранний мид + комбо · Лес
+		"file": "03_forest_combo.png",
 		"setup": {
-			"stage": 10, "tap": 7,
-			"allies": {"knight": 6, "ratrogue": 3, "bard": 1},
-			"gold": 890.0, "boss_time": 18.0, "daily_ready": false, "daily_claims": 1,
-			"enemy_hp_ratio": 0.78,
-		},
-		"enemy": "shroom",
-		"buy_mult": 10,
-		"scroll": 0,
-	},
-	{
-		# 04 · Ранний мид · Лес
-		"file": "04_forest_mid.png",
-		"setup": {
-			"stage": 28, "tap": 11, "kills": 2,
-			"allies": {"knight": 10, "ratrogue": 7, "bard": 4, "blacksmith": 2},
-			"gold": 2400.0, "daily_ready": false, "daily_claims": 1,
+			"stage": 18, "tap": 9, "kills": 2,
+			"allies": {"knight": 8, "ratrogue": 5, "bard": 2},
+			"gold": 1800.0, "punk_charge": 0.35, "daily_ready": false, "daily_claims": 1,
 			"enemy_hp_ratio": 0.48,
 		},
-		"enemy": "troll",
+		"enemy": "satyr_rocker",
+		"combo": 30,
 		"buy_mult": 10,
 		"scroll": 0,
 	},
 	{
-		# 05 · Режим ХОЙ (панк-рейдж) · Погост (не босс — чистый рейдж)
-		"file": "05_punk_rage.png",
+		# 04 · Ворота Леса · босс + панк
+		"file": "04_forest_gate_punk.png",
 		"setup": {
-			"stage": 58, "tap": 14, "kills": 2,
-			"allies": {"knight": 12, "ratrogue": 9, "bard": 6, "blacksmith": 3},
-			"gold": 5100.0, "punk_active": true, "punk_time": 11.0,
-			"daily_ready": false, "daily_claims": 2,
-			"enemy_hp_ratio": 0.42,
+			"stage": 50, "tap": 18,
+			"allies": {
+				"knight": 16, "ratrogue": 12, "bard": 8, "blacksmith": 5, "alchemist": 2,
+			},
+			"gold": 9200.0, "boss_time": 17.0, "punk_active": true, "punk_time": 7.0,
+			"enemy_hp_ratio": 0.66,
 		},
-		"enemy": "zombie",
+		"enemy": "shroom",
 		"action": "store_shot_punk_rage",
-		"buy_mult": 1,
+		"combo": 50,
+		"buy_mult": 10,
+		"scroll": 40,
+	},
+	{
+		# 05 · Подъезд · домовой
+		"file": "05_podjezd.png",
+		"setup": {
+			"stage": 32, "tap": 12, "kills": 1,
+			"allies": {"knight": 11, "ratrogue": 8, "bard": 5, "blacksmith": 3},
+			"gold": 4100.0, "punk_charge": 0.6, "daily_ready": false, "daily_claims": 1,
+			"enemy_hp_ratio": 0.58,
+		},
+		"enemy": "domovoi",
+		"buy_mult": 10,
 		"scroll": 0,
 	},
 	{
-		# 06 · Босс · Погост
-		"file": "06_graveyard_boss.png",
+		# 06 · Подъезд · гаражный голем + оффлайн-модалка
+		"file": "06_podjezd_offline.png",
 		"setup": {
-			"stage": 60, "tap": 16,
-			"allies": {"knight": 15, "ratrogue": 11, "bard": 8, "blacksmith": 5, "alchemist": 2},
-			"gold": 7200.0, "boss_time": 21.0,
-			"enemy_hp_ratio": 0.88,
+			"stage": 44, "tap": 14,
+			"allies": {"knight": 13, "ratrogue": 10, "bard": 7, "blacksmith": 4, "alchemist": 1},
+			"gold": 6400.0, "daily_ready": false, "daily_claims": 2,
+			"enemy_hp_ratio": 0.7,
+		},
+		"enemy": "garage_golem",
+		"action": "store_shot_offline",
+		"wait": 28,
+		"buy_mult": 10,
+		"scroll": 0,
+	},
+	{
+		# 07 · Погост · панк-раж
+		"file": "07_graveyard_punk.png",
+		"setup": {
+			"stage": 58, "tap": 16, "kills": 2,
+			"allies": {
+				"knight": 15, "ratrogue": 12, "bard": 9, "blacksmith": 6, "alchemist": 3,
+			},
+			"gold": 8800.0, "punk_active": true, "punk_time": 9.0,
+			"enemy_hp_ratio": 0.4,
 		},
 		"enemy": "emoghost",
-		"buy_mult": 10,
-		"scroll": 90,
+		"action": "store_shot_punk_rage",
+		"combo": 80,
+		"buy_mult": 1,
+		"scroll": 80,
 	},
 	{
-		# 07 · Труппа сверху · Трактир
-		"file": "07_tavern_troupe.png",
+		# 08 · Двор · кобольд + труппа
+		"file": "08_schoolyard.png",
 		"setup": {
-			"stage": 105, "tap": 18, "kills": 0,
+			"stage": 82, "tap": 18, "kills": 0,
 			"allies": {
 				"knight": 18, "ratrogue": 14, "bard": 11, "blacksmith": 8,
 				"alchemist": 5, "hunter": 3,
 			},
-			"gold": 14500.0,
+			"gold": 14200.0, "punk_charge": 0.2,
 			"enemy_hp_ratio": 0.62,
+		},
+		"enemy": "kobold_pickpocket",
+		"buy_mult": 100,
+		"scroll": 0,
+	},
+	{
+		# 09 · Трактир · труппа сверху
+		"file": "09_tavern_troupe.png",
+		"setup": {
+			"stage": 108, "tap": 20,
+			"allies": {
+				"knight": 20, "ratrogue": 16, "bard": 13, "blacksmith": 10,
+				"alchemist": 7, "hunter": 4, "witch": 2,
+			},
+			"gold": 21000.0,
+			"enemy_hp_ratio": 0.55,
 		},
 		"enemy": "orkgang",
 		"buy_mult": 100,
 		"scroll": 0,
 	},
 	{
-		# 08 · Скролл труппы вниз · Трактир
-		"file": "08_tavern_scroll.png",
+		# 10 · Трактир · скролл к ведьме/шуту
+		"file": "10_tavern_scroll.png",
 		"setup": {
 			"stage": 118, "tap": 22,
 			"allies": {
-				"knight": 22, "ratrogue": 17, "bard": 14, "blacksmith": 11,
-				"alchemist": 8, "hunter": 6, "witch": 3,
+				"knight": 22, "ratrogue": 18, "bard": 15, "blacksmith": 12,
+				"alchemist": 9, "hunter": 7, "witch": 5, "jester": 3,
 			},
-			"gold": 22000.0,
-			"enemy_hp_ratio": 0.51,
+			"gold": 28000.0, "punk_charge": 0.85,
+			"enemy_hp_ratio": 0.5,
 		},
 		"enemy": "troll",
 		"buy_mult": 100,
-		"scroll": 280,
+		"scroll": 320,
 	},
 	{
-		# 09 · Босс · Трактир
-		"file": "09_tavern_boss.png",
+		# 11 · 24/7 · суккуб-кассирша
+		"file": "11_shop24.png",
 		"setup": {
-			"stage": 130, "tap": 24,
+			"stage": 132, "tap": 24, "kills": 1,
 			"allies": {
-				"knight": 24, "ratrogue": 19, "bard": 15, "blacksmith": 12,
-				"alchemist": 9, "hunter": 7, "witch": 4,
+				"knight": 24, "ratrogue": 19, "bard": 16, "blacksmith": 13,
+				"alchemist": 10, "hunter": 8, "witch": 5, "jester": 3,
 			},
-			"gold": 28000.0, "boss_time": 19.0,
-			"enemy_hp_ratio": 0.70,
+			"gold": 34000.0,
+			"enemy_hp_ratio": 0.68,
 		},
-		"enemy": "orkskinhead",
-		"buy_mult": -1,
-		"scroll": 140,
+		"enemy": "succubus_cashier",
+		"combo": 15,
+		"buy_mult": 10,
+		"scroll": 120,
 	},
 	{
-		# 10 · Босс · Город
-		"file": "10_city_boss.png",
+		# 12 · Город · босс + оффер (ворота stage 150 = 24/7; для города берём mid-boss feel на 160)
+		"file": "12_city_boss_offer.png",
 		"setup": {
-			"stage": 160, "tap": 28,
+			"stage": 160, "tap": 26,
 			"allies": {
-				"knight": 28, "ratrogue": 22, "bard": 18, "blacksmith": 14,
-				"alchemist": 11, "hunter": 9, "witch": 6, "jester": 3,
+				"knight": 26, "ratrogue": 21, "bard": 17, "blacksmith": 14,
+				"alchemist": 11, "hunter": 9, "witch": 6, "jester": 4, "berserker": 1,
 			},
-			"gold": 41000.0, "boss_time": 24.0,
-			"enemy_hp_ratio": 0.91,
+			"gold": 42000.0, "boss_time": 4.0,
+			"enemy_hp_ratio": 0.92,
 		},
-		"enemy": "banshee",
+		"enemy": "basilisk_gai",
+		"action": "store_shot_boss_offer",
+		"wait": 28,
 		"buy_mult": 10,
 		"scroll": 0,
 	},
 	{
-		# 11 · Мид-скролл · Город
-		"file": "11_city_mid.png",
+		# 13 · Город · мид + крыса
+		"file": "13_city_mid.png",
 		"setup": {
-			"stage": 178, "tap": 32, "kills": 3,
+			"stage": 162, "tap": 28, "kills": 2,
 			"allies": {
-				"knight": 32, "ratrogue": 26, "bard": 21, "blacksmith": 17,
-				"alchemist": 13, "hunter": 11, "witch": 8, "jester": 5, "berserker": 2,
+				"knight": 28, "ratrogue": 23, "bard": 19, "blacksmith": 15,
+				"alchemist": 12, "hunter": 10, "witch": 7, "jester": 5, "berserker": 2,
 			},
-			"gold": 56000.0,
+			"gold": 51000.0, "punk_charge": 0.45,
 			"enemy_hp_ratio": 0.44,
 		},
 		"enemy": "ratgangster",
 		"buy_mult": -1,
-		"scroll": 420,
+		"scroll": 200,
 	},
 	{
-		# 12 · Афиша
-		"file": "12_daily.png",
+		# 14 · Неткафе · эльф-рейвер + комбо
+		"file": "14_netcafe.png",
+		"setup": {
+			"stage": 184, "tap": 30,
+			"allies": {
+				"knight": 30, "ratrogue": 25, "bard": 20, "blacksmith": 16,
+				"alchemist": 13, "hunter": 11, "witch": 8, "jester": 6,
+				"berserker": 3, "necromancer": 1,
+			},
+			"gold": 62000.0, "punk_charge": 0.15,
+			"enemy_hp_ratio": 0.52,
+		},
+		"enemy": "elf_raver",
+		"combo": 50,
+		"buy_mult": 100,
+		"scroll": 380,
+	},
+	{
+		# 15 · Фанера · чёрт-крупье + панк
+		"file": "15_nightclub_punk.png",
+		"setup": {
+			"stage": 208, "tap": 32, "kills": 1,
+			"allies": {
+				"knight": 32, "ratrogue": 27, "bard": 22, "blacksmith": 18,
+				"alchemist": 14, "hunter": 12, "witch": 9, "jester": 7,
+				"berserker": 4, "necromancer": 2,
+			},
+			"gold": 74000.0, "punk_active": true, "punk_time": 5.5,
+			"enemy_hp_ratio": 0.38,
+		},
+		"enemy": "chort_croupier",
+		"action": "store_shot_punk_rage",
+		"combo": 80,
+		"buy_mult": 1,
+		"scroll": 260,
+	},
+	{
+		# 16 · Замок · вампир
+		"file": "16_castle.png",
+		"setup": {
+			"stage": 230, "tap": 34,
+			"allies": {
+				"knight": 34, "ratrogue": 29, "bard": 24, "blacksmith": 20,
+				"alchemist": 16, "hunter": 14, "witch": 11, "jester": 8,
+				"berserker": 5, "necromancer": 3,
+			},
+			"gold": 88000.0, "punk_charge": 0.7,
+			"enemy_hp_ratio": 0.6,
+		},
+		"enemy": "vampire",
+		"buy_mult": 100,
+		"scroll": 180,
+	},
+	{
+		# 17 · Афиша
+		"file": "17_daily.png",
 		"setup": {
 			"stage": 112, "tap": 20,
 			"allies": {
@@ -194,8 +291,8 @@ const SHOTS: Array[Dictionary] = [
 		"scroll": 0,
 	},
 	{
-		# 13 · Новая Сказка
-		"file": "13_prestige.png",
+		# 18 · Новая Сказка
+		"file": "18_prestige.png",
 		"setup": {
 			"stage": 215, "max_stage": 215, "tap": 36,
 			"allies": {
@@ -214,37 +311,121 @@ const SHOTS: Array[Dictionary] = [
 		"scroll": 0,
 	},
 	{
-		# 14 · Атмосфера · Замок
-		"file": "14_castle.png",
+		# 19 · Настройки
+		"file": "19_settings.png",
 		"setup": {
-			"stage": 205, "tap": 30, "kills": 1,
-			"allies": {
-				"knight": 30, "ratrogue": 24, "bard": 19, "blacksmith": 15,
-				"alchemist": 12, "hunter": 10, "witch": 7, "jester": 4,
-			},
-			"gold": 47000.0,
-			"enemy_hp_ratio": 0.58,
-		},
-		"enemy": "vampire",
-		"buy_mult": 100,
-		"scroll": 200,
-	},
-	{
-		# 15 · Финал локации · босс Леса (ворота) + ХОЙ
-		"file": "15_forest_gate_boss.png",
-		"setup": {
-			"stage": 50, "tap": 20,
+			"stage": 95, "tap": 18,
 			"allies": {
 				"knight": 18, "ratrogue": 14, "bard": 10, "blacksmith": 7,
-				"alchemist": 4,
+				"alchemist": 4, "hunter": 2,
 			},
-			"gold": 9800.0, "boss_time": 16.0, "punk_active": true, "punk_time": 8.0,
-			"enemy_hp_ratio": 0.63,
+			"gold": 12000.0, "punk_charge": 0.5,
+			"enemy_hp_ratio": 0.65,
 		},
-		"enemy": "werewolf",
-		"action": "store_shot_punk_rage",
+		"enemy": "centaur_courier",
+		"action": "store_shot_open_settings",
+		"wait": 28,
 		"buy_mult": 10,
 		"scroll": 60,
+	},
+	{
+		# 20 · Медуза · Фанера · MAX buy + барки героев видны в ленте
+		"file": "20_medusa_late.png",
+		"setup": {
+			"stage": 220, "tap": 33, "kills": 3,
+			"allies": {
+				"knight": 33, "ratrogue": 28, "bard": 23, "blacksmith": 19,
+				"alchemist": 15, "hunter": 13, "witch": 10, "jester": 7,
+				"berserker": 4, "necromancer": 2,
+			},
+			"gold": 79000.0, "punk_charge": 0.9,
+			"enemy_hp_ratio": 0.42,
+		},
+		"enemy": "medusa_makeup",
+		"combo": 15,
+		"buy_mult": -1,
+		"scroll": 420,
+	},
+	{
+		# 21 · Погост · скелет (враг крупно, без модалки)
+		"file": "21_skeleton.png",
+		"setup": {
+			"stage": 64, "tap": 17, "kills": 1,
+			"allies": {
+				"knight": 16, "ratrogue": 13, "bard": 10, "blacksmith": 7, "alchemist": 4,
+			},
+			"gold": 9800.0, "punk_charge": 0.4,
+			"enemy_hp_ratio": 0.7,
+		},
+		"enemy": "skeleton",
+		"buy_mult": 10,
+		"scroll": 40,
+	},
+	{
+		# 22 · Подъезд · полтергейст-сосед
+		"file": "22_polter.png",
+		"setup": {
+			"stage": 38, "tap": 13, "kills": 2,
+			"allies": {
+				"knight": 12, "ratrogue": 9, "bard": 6, "blacksmith": 3,
+			},
+			"gold": 5200.0, "punk_charge": 0.25,
+			"enemy_hp_ratio": 0.55,
+		},
+		"enemy": "polter_neighbor",
+		"combo": 15,
+		"buy_mult": 10,
+		"scroll": 0,
+	},
+	{
+		# 23 · 24/7 · вурдалак-шаурмач
+		"file": "23_wurdulak.png",
+		"setup": {
+			"stage": 140, "tap": 25, "kills": 0,
+			"allies": {
+				"knight": 25, "ratrogue": 20, "bard": 16, "blacksmith": 13,
+				"alchemist": 10, "hunter": 7, "witch": 4, "jester": 2,
+			},
+			"gold": 38000.0, "punk_charge": 0.55,
+			"enemy_hp_ratio": 0.62,
+		},
+		"enemy": "wurdulak",
+		"buy_mult": 100,
+		"scroll": 100,
+	},
+	{
+		# 24 · Город · гарпия-кондукторша
+		"file": "24_harpy.png",
+		"setup": {
+			"stage": 168, "tap": 29, "kills": 1,
+			"allies": {
+				"knight": 29, "ratrogue": 24, "bard": 20, "blacksmith": 16,
+				"alchemist": 12, "hunter": 10, "witch": 7, "jester": 5, "berserker": 2,
+			},
+			"gold": 54000.0, "punk_charge": 0.75,
+			"enemy_hp_ratio": 0.48,
+		},
+		"enemy": "harpy_conductor",
+		"combo": 30,
+		"buy_mult": -1,
+		"scroll": 240,
+	},
+	{
+		# 25 · Замок · гном-кузнец
+		"file": "25_dwarf.png",
+		"setup": {
+			"stage": 238, "tap": 35, "kills": 2,
+			"allies": {
+				"knight": 35, "ratrogue": 30, "bard": 25, "blacksmith": 21,
+				"alchemist": 17, "hunter": 14, "witch": 11, "jester": 8,
+				"berserker": 5, "necromancer": 3,
+			},
+			"gold": 92000.0, "punk_charge": 0.3,
+			"enemy_hp_ratio": 0.58,
+		},
+		"enemy": "dwarf",
+		"buy_mult": 100,
+		"scroll": 160,
 	},
 ]
 
@@ -252,7 +433,7 @@ const SHOTS: Array[Dictionary] = [
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var guard := Timer.new()
-	guard.wait_time = 180.0
+	guard.wait_time = 240.0
 	guard.one_shot = true
 	guard.timeout.connect(func(): printerr("STORE_SHOTS_TIMEOUT"); get_tree().quit(1))
 	add_child(guard)
@@ -284,6 +465,12 @@ func _ready() -> void:
 
 
 func _capture(shot: Dictionary) -> void:
+	var path := OUT_DIR + String(shot.file)
+	var abs_path := ProjectSettings.globalize_path(path)
+	if not OVERWRITE and FileAccess.file_exists(abs_path):
+		print("SKIP exists ", path)
+		return
+
 	_main.store_shot_clean_ui()
 	get_tree().paused = false
 	if is_instance_valid(_main._prestige_panel) and _main._prestige_panel.visible:
@@ -305,10 +492,16 @@ func _capture(shot: Dictionary) -> void:
 	await _wait_frames(10)
 	if shot.has("scroll"):
 		await _main.store_shot_scroll_troupe(int(shot.scroll))
+	if shot.has("combo"):
+		_main.store_shot_show_combo(int(shot.combo))
 	await _wait_frames(8)
 
 	if shot.has("action"):
-		_main.call(String(shot.action))
+		var act := String(shot.action)
+		if act == "store_shot_offline":
+			_main.store_shot_offline(12500.0)
+		else:
+			_main.call(act)
 		await _wait_frames(int(shot.get("wait", FRAME_WAIT)))
 	else:
 		await _wait_frames(FRAME_WAIT)
@@ -317,7 +510,6 @@ func _capture(shot: Dictionary) -> void:
 	if img == null:
 		printerr("IMG_NULL ", shot.file)
 		return
-	var path := OUT_DIR + String(shot.file)
 	var err := img.save_png(path)
 	if err != OK:
 		printerr("SAVE_FAIL ", path, " err=", err)

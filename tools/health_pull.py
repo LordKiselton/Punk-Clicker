@@ -285,9 +285,9 @@ def main() -> None:
     ad_sum = sum(ad_all.get(pid, 0) for pid, _ in AD_PLACEMENTS) or sum(ad_all.values())
     for pid, title in AD_PLACEMENTS:
         n = ad_all.get(pid, 0)
-        n7 = ad_7.get(pid, 0)
+        ad_n7 = ad_7.get(pid, 0)
         share = f"{100.0 * n / ad_sum:.0f}%" if ad_sum else "—"
-        lines.append(f"| {title} (`{pid}`) | {n} | {n7} | {share} |")
+        lines.append(f"| {title} (`{pid}`) | {n} | {ad_n7} | {share} |")
     other = sum(v for k, v in ad_all.items() if k not in {p for p, _ in AD_PLACEMENTS})
     if other:
         lines.append(f"| прочее | {other} | {sum(v for k, v in ad_7.items() if k not in {p for p, _ in AD_PLACEMENTS})} | — |")
@@ -297,7 +297,11 @@ def main() -> None:
         tut = ev_all.get("tutorial_done", 0)
         lines.append(f"Тутор / уники (жизнь): **{100.0 * tut / users:.0f}%**")
     if n7:
-        lines.append(f"Тутор / новые (7д): **{100.0 * ev_7.get('tutorial_done', 0) / n7:.0f}%**")
+        lines.append(
+            f"Тутор-события / новые в календарном окне 7д: "
+            f"**{100.0 * ev_7.get('tutorial_done', 0) / n7:.0f}%** "
+            f"_(не cohort CR: числитель может включать старые установки)_"
+        )
     if ru.get("ok") and new:
         lines.append(f"Стор-установки накопительно / first open: **{ru['inst_all']} / {int(new)}**")
 
