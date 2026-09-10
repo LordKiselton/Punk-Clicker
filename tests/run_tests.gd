@@ -207,6 +207,27 @@ func _test_game_formulas() -> void:
 		var reward: Dictionary = Game.daily_reward_preview(day)
 		_check(float(reward.gold) >= 0.0 and int(reward.bells) >= 0, "daily reward is non-negative: day %d" % day)
 
+	_reset_game_state()
+	Game.stage = 1
+	_check(Balance.CATCH_DURATION_SEC == 30.0, "catch run lasts 30 seconds")
+	_check(Balance.CATCH_OFFER_SEC == 30.0, "catch offer window is 30 seconds")
+	_check(Balance.CATCH_FIRST_DELAY_SEC == 55.0, "catch first delay is after tutorial")
+	_check(Balance.CATCH_CD_MISS_SEC == 90.0, "catch miss cooldown is 90 seconds")
+	_check(Balance.CATCH_CD_PLAY_SEC == 150.0, "catch play cooldown is 150 seconds")
+	_check(Game.catch_payout(0, false) == 0.0, "zero coins pay nothing")
+	_check(Game.catch_payout(10, true) == 0.0, "catching a bomb pays nothing")
+	_check(Game.catch_payout(10, false) > Game.catch_payout(5, false), "more coins pay more gold")
+	_check(ResourceLoader.exists("res://game/minigames/catch/CatchMinigame.tscn"), "catch scene exists")
+	_check(ResourceLoader.exists("res://art/troupe/v3/jester.png"), "catch sidebar uses v3 jester portrait")
+	for p in ["jester_idle", "jester_ul", "jester_dl", "jester_ur", "jester_dr", "catch_bomb"]:
+		_check(ResourceLoader.exists("res://art/minigames/catch_play/%s.png" % p), "catch sprite exists: " + p)
+	_check(FileAccess.file_exists(ProjectSettings.globalize_path("res://art/minigames/catch_play/jester_win.png")), "catch win pose exists")
+	_check(ResourceLoader.exists("res://game/minigames/salvo/SalvoMinigame.tscn"), "salvo scene exists")
+	_check(Balance.SALVO_HOY_KILLS == 12, "salvo HOY costs 12 kills")
+	_check(Balance.SALVO_HOY_DMG == 8, "salvo HOY damage pierces current foes")
+	for p in ["witch", "trollbat", "skelplane", "zombiglide", "sky_far", "loop_mist"]:
+		_check(FileAccess.file_exists(ProjectSettings.globalize_path("res://art/minigames/salvo_play/%s.png" % p)), "salvo sprite exists: " + p)
+
 
 func _test_save_migration_and_clamps() -> void:
 	var corrupt_save := {

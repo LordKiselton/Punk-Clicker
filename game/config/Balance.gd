@@ -125,6 +125,16 @@ const OFFLINE_RATE: float = 1.0                # доля от total_dps-экв�
 const TAP_UPGRADE_BASE_COST: float = 15.0
 const TAP_UPGRADE_GROWTH: float = 1.15
 
+# --- Антракт: ловец --------------------------------------------------------
+const CATCH_DURATION_SEC: float = 30.0         # длина одной игры
+const CATCH_OFFER_SEC: float = 30.0            # сколько слот висит, если не тапнули
+const CATCH_FIRST_DELAY_SEC: float = 55.0      # пауза после тутора / старта сессии
+const CATCH_CD_MISS_SEC: float = 90.0          # КД, если окно прогорело
+const CATCH_CD_PLAY_SEC: float = 150.0         # КД после захода в ловца
+const CATCH_COIN_GOLD_FRAC: float = 0.4        # золото за монету = enemy_gold(stage) * это, без босс-мульти
+const SALVO_HOY_KILLS: int = 12                # заряд ХОЙ в залпе
+const SALVO_HOY_DMG: int = 8                   # урон ХОЙ-столба (текущие враги мрут, жирный босс нет)
+
 # --- Сейв ------------------------------------------------------------------
 const SAVE_PATH: String = "user://save.json"
 const AUTOSAVE_INTERVAL_SEC: float = 15.0      # автосохранение раз в N секунд

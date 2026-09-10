@@ -9,6 +9,7 @@ extends Node
 
 # Режим съёмки скринов стора (tools/store_shots.gd): без лоадскрина, без автобоя.
 var store_shot_mode: bool = false
+var minigame_lock: bool = false   # антракт: стоп DPS/босса/панка; UI хостит сцену из game/minigames/
 # Режиссёрский ролик (tools/trailer.gd): store_shot + тик панка/DPS, без рандомного спавна.
 var trailer_mode: bool = false
 var trailer_hold_spawn: bool = false   # убийство не спавнит следующего — ждём режиссёра
@@ -548,6 +549,17 @@ func _enemy_gold() -> float:
 	var g: float = Balance.ENEMY_GOLD_BASE * pow(Balance.ENEMY_GOLD_GROWTH, stage - 1)
 	return g * (Balance.BOSS_GOLD_MULT if is_boss else 1.0) * punk_gold_mult() * prestige_gold_mult()
 
+
+func catch_coin_value() -> float:
+	var g: float = Balance.ENEMY_GOLD_BASE * pow(Balance.ENEMY_GOLD_GROWTH, stage - 1)
+	return maxf(1.0, g * Balance.CATCH_COIN_GOLD_FRAC) * prestige_gold_mult()
+
+
+func catch_payout(caught: int, fail: bool) -> float:
+	if fail or caught <= 0:
+		return 0.0
+	return float(caught) * catch_coin_value()
+
 func _hit_enemy(amount: float) -> void:
 	if amount <= 0.0:
 		return
@@ -667,6 +679,8 @@ func _retreat_stage() -> void:
 # --- Действия игрока ---------------------------------------------------------
 func player_tap() -> Dictionary:
 	# Возвращает инфо для juice/UI: {"damage":x, "crit":bool, "combo_hits":n, "combo_mult":m, "combo_tier_up":bool}
+	if minigame_lock:
+		return {"damage": 0.0, "crit": false, "combo_hits": 0, "combo_mult": 1.0, "combo_tier_up": false}
 	_add_punk_charge()                 # заряд панк-рока копится от тапов игрока
 	var cinfo: Dictionary = _register_combo_hit()
 	var dmg: float = tap_damage() * punk_dmg_mult() * boss_ad_mult() * float(cinfo.mult)
@@ -699,6 +713,8 @@ func buy_ally(id: String) -> bool:
 
 # --- Тик: idle-DPS + таймер босса -------------------------------------------
 func _process(delta: float) -> void:
+	if minigame_lock:
+		return
 	if store_shot_mode:
 		if trailer_mode:
 			_trailer_tick(delta)

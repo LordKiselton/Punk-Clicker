@@ -11,6 +11,7 @@ TH = 95.0
 JOBS = [
 	(ROOT / "candidates" / "hoy_beam.png", OUT / "hoy_beam.png"),
 	(ROOT / "candidates" / "shot.png", OUT / "shot.png"),
+	(ROOT / "candidates" / "foe_shot.png", OUT / "foe_shot.png"),
 ]
 
 
@@ -55,7 +56,7 @@ def main() -> None:
 			continue
 		im = Image.open(src)
 		out = key_magenta(im)
-		if dst.name == "shot.png":
+		if dst.name in ("shot.png", "foe_shot.png"):
 			out = crop_opaque(out)
 		out.save(dst)
 		a = np.asarray(out)[:, :, 3]

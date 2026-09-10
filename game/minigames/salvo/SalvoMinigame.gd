@@ -1,6 +1,6 @@
 extends MinigameBase
 class_name SalvoMinigame
-## Залп: drag ведьмы, автоогонь, ряды зигзагом. ХОЙ с 12 киллов сносит нижний ряд.
+## Ведьминский полёт: drag, автоогонь, ряды зигзагом. ХОЙ с 12 киллов сносит нижний ряд.
 
 const WITCH_PATH := "res://art/minigames/salvo_play/witch.png"
 const FOE_PATHS := {
@@ -30,6 +30,11 @@ const SHOT_PATH := "res://art/minigames/salvo_play/shot.png"
 const SHOT_W := 22.0
 const SHOT_H := 72.0
 const SHOT_SPD := 980.0
+const GOLD_PATH := "res://art/ui/gold.png"
+const GOLD_UNITS := ["", "K", "M", "B", "T", "Qa"]
+const KILL_STUN := 0.16
+const KILL_FLASH := Color(2.6, 2.35, 2.5)
+const CRASH_STUN := 0.2
 const FOE_SPD := 78.0
 const FOE_DROP := 26.0
 const FOE_BANK := 0.175  # ~10°
@@ -54,8 +59,19 @@ const KB_IMPULSE := 380.0
 const SKY_PATH := "res://art/minigames/salvo_play/sky_far.png"
 const MIST_PATH := "res://art/minigames/salvo_play/loop_mist.png"
 const HOY_BEAM_PATH := "res://art/minigames/salvo_play/hoy_beam.png"
-const HOY_BEAM_W := 178.0
+const HOY_BEAM_W := 210.0
+const HOY_HIT_PAD := 28.0
 const HOY_BEAM_SEC := 0.4
+const ESHOT_PATH := "res://art/minigames/salvo_play/foe_shot.png"
+const ESHOT_W := 34.0
+const ESHOT_H := 42.0
+const ESHOT_SPD := 390.0
+const ESHOT_MAX := 2
+const ESHOT_CD := 1.15
+const ESHOT_TELE := 0.32
+const ESHOT_FLASH := Color(2.2, 1.45, 0.45)
+const WITCH_HURT_W := 96.0
+const WITCH_HURT_H := 148.0
 const MIST_SPD := 42.0
 const MIST_ALPHA := 0.52
 const MIST_ON := false
@@ -67,6 +83,8 @@ var _tex_sky: Texture2D
 var _tex_mist: Texture2D
 var _tex_hoy: Texture2D
 var _tex_shot: Texture2D
+var _tex_eshot: Texture2D
+var _tex_gold: Texture2D
 var _header_font: Font
 var _stage: Control
 var _field: Control
@@ -77,6 +95,7 @@ var _witch: TextureRect
 var _hud: Label
 var _hoy_lab: Label
 var _gold_label: Label
+var _gold_icon: TextureRect
 var _home: Vector2 = Vector2.ZERO
 var _holding: bool = false
 var _lerp_from: Vector2 = Vector2.ZERO
@@ -89,9 +108,17 @@ var _spawned: int = 0
 var _ended: bool = false
 var _live: bool = false
 var _winning: bool = false
+var _witch_dying: bool = false
+var _witch_stun: float = 0.0
+var _witch_fall: Vector2 = Vector2.ZERO
 var _rng := RandomNumberGenerator.new()
 var _foes: Array[Dictionary] = []
-var _shots: Array[Control] = []
+var _shots: Array[Dictionary] = []
+var _e_shots: Array[Dictionary] = []
+var _e_cd: float = 0.7
+var _coin_val: float = 1.0
+var _gold_shown: float = 0.0
+var _gold_target: float = 0.0
 var _fire_cd: float = 0.0
 var _dir: float = 1.0
 var _origin: Vector2 = Vector2.ZERO
@@ -115,11 +142,12 @@ func minigame_kind() -> String:
 func setup(ctx: Dictionary) -> void:
 	_infinite = bool(ctx.get("infinite", false))
 	_time_left = float(ctx.get("duration", Balance.CATCH_DURATION_SEC))
+	_coin_val = Game.catch_coin_value() if Game != null else 1.0
 	_update_hud()
 
 
 func begin() -> void:
-	_slam("ЗАЛП")
+	_slam("ВЕДЬМИНСКИЙ\nПОЛЁТ")
 	if not is_instance_valid(_field) or _field.size.x < 8.0:
 		await get_tree().process_frame
 	_spawn_wave()
@@ -166,6 +194,12 @@ func _load_tex() -> void:
 	_tex_shot = _load_tex_file(SHOT_PATH)
 	if _tex_shot == null and ResourceLoader.exists(SHOT_PATH):
 		_tex_shot = load(SHOT_PATH)
+	_tex_eshot = _load_tex_file(ESHOT_PATH)
+	if _tex_eshot == null and ResourceLoader.exists(ESHOT_PATH):
+		_tex_eshot = load(ESHOT_PATH)
+	_tex_gold = _load_tex_file(GOLD_PATH)
+	if _tex_gold == null and ResourceLoader.exists(GOLD_PATH):
+		_tex_gold = load(GOLD_PATH)
 	if _tex_mist == null and ResourceLoader.exists(MIST_PATH):
 		_tex_mist = load(MIST_PATH)
 
@@ -268,6 +302,7 @@ func _build() -> void:
 
 	_gold_label = Label.new()
 	_gold_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_gold_label.offset_left = 48.0
 	_gold_label.offset_top = -52.0
 	_gold_label.offset_bottom = -12.0
 	_gold_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -279,6 +314,22 @@ func _build() -> void:
 	if _header_font:
 		_gold_label.add_theme_font_override("font", _header_font)
 	add_child(_gold_label)
+	_gold_icon = TextureRect.new()
+	_gold_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_gold_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_gold_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_gold_icon.z_index = 6
+	_gold_icon.size = Vector2(36, 36)
+	_gold_icon.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_gold_icon.anchor_left = 0.5
+	_gold_icon.anchor_right = 0.5
+	_gold_icon.offset_left = -118.0
+	_gold_icon.offset_right = -82.0
+	_gold_icon.offset_top = -48.0
+	_gold_icon.offset_bottom = -12.0
+	if _tex_gold:
+		_gold_icon.texture = _tex_gold
+	add_child(_gold_icon)
 	_update_hud()
 
 
@@ -309,7 +360,7 @@ func _place_home() -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
-	if _ended or not _live or _winning:
+	if _ended or not _live or _winning or _witch_dying:
 		return
 	if event is InputEventScreenTouch:
 		var st := event as InputEventScreenTouch
@@ -370,6 +421,14 @@ func _process(delta: float) -> void:
 		return
 	_tick_shake(delta)
 	_tick_mist(delta)
+	_tick_gold_roll(delta)
+	if _witch_dying:
+		_tick_witch_crash(delta)
+		_tick_zig(delta)
+		_layout_foes(delta)
+		_tick_shots(delta)
+		_tick_e_shots(delta)
+		return
 	if not _live:
 		return
 	_t += delta
@@ -392,10 +451,12 @@ func _process(delta: float) -> void:
 		_update_hud()
 	_tick_fire(delta)
 	_tick_shots(delta)
+	_tick_enemy_gun(delta)
+	_tick_e_shots(delta)
 	_tick_zig(delta)
 	_layout_foes(delta)
 	if _any_crossed():
-		_fail()
+		_begin_crash()
 		return
 	if not _entering and _living() == 0:
 		_spawn_wave()
@@ -407,37 +468,49 @@ func _tick_fire(delta: float) -> void:
 		return
 	_fire_cd = FIRE_SEC
 	_recoil = RECOIL_PX
+	var ang: float = _witch.rotation
+	var muzzle: Vector2 = _witch_muzzle()
 	var s := TextureRect.new()
 	s.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	s.stretch_mode = TextureRect.STRETCH_SCALE
 	s.size = Vector2(SHOT_W, SHOT_H)
+	s.pivot_offset = Vector2(SHOT_W * 0.5, SHOT_H)
+	s.rotation = ang
 	s.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	s.z_index = 4
 	if _tex_shot:
 		s.texture = _tex_shot
 	else:
 		s.modulate = Color(0.45, 1.0, 0.32, 1.0)
+	s.position = muzzle - s.pivot_offset
 	_field.add_child(s)
-	var muzzle: Vector2 = _witch.position + Vector2(WITCH_H * 0.5 - SHOT_W * 0.5, 8.0)
-	s.position = muzzle
-	_shots.append(s)
+	_shots.append({"n": s, "vel": Vector2(0.0, -SHOT_SPD).rotated(ang)})
+
+
+func _witch_muzzle() -> Vector2:
+	var local: Vector2 = Vector2(WITCH_H * 0.5, 28.0)
+	var from_p: Vector2 = local - _witch.pivot_offset
+	return _witch.position + _witch.pivot_offset + from_p.rotated(_witch.rotation)
 
 
 func _tick_shots(delta: float) -> void:
 	var i: int = _shots.size() - 1
 	while i >= 0:
-		var s: Control = _shots[i]
-		if not is_instance_valid(s):
+		var shot: Dictionary = _shots[i]
+		var s: Control = shot.get("n") as Control
+		if s == null or not is_instance_valid(s):
 			_shots.remove_at(i)
 			i -= 1
 			continue
-		s.position.y -= SHOT_SPD * delta
-		if s.position.y + SHOT_H < -20.0:
+		var vel: Vector2 = shot.get("vel", Vector2(0, -SHOT_SPD))
+		s.position += vel * delta
+		if s.position.y + SHOT_H < -40.0 or s.position.x < -80.0 or s.position.x > _field.size.x + 80.0:
 			s.queue_free()
 			_shots.remove_at(i)
 			i -= 1
 			continue
 		var hit: bool = false
+		var box := Rect2(s.position, s.size)
 		for foe in _foes:
 			if not bool(foe.get("alive", false)):
 				continue
@@ -445,13 +518,142 @@ func _tick_shots(delta: float) -> void:
 			if n == null or not is_instance_valid(n):
 				continue
 			var r := Rect2(n.position + Vector2(18, 18), n.size - Vector2(36, 36))
-			if r.intersects(Rect2(s.position, s.size)):
+			if r.intersects(box):
 				_hurt_foe(foe, 1)
 				hit = true
 				break
 		if hit:
 			s.queue_free()
 			_shots.remove_at(i)
+		i -= 1
+
+
+func _witch_hurt_rect() -> Rect2:
+	var p: Vector2 = _witch.position + _witch.pivot_offset
+	return Rect2(p.x - WITCH_HURT_W * 0.5, p.y - WITCH_HURT_H * 0.45, WITCH_HURT_W, WITCH_HURT_H)
+
+
+func _hoy_hit_rect() -> Rect2:
+	var bw: float = HOY_BEAM_W + HOY_HIT_PAD * 2.0
+	var cx: float = _witch.position.x + WITCH_H * 0.5
+	var muzzle: float = _witch.position.y + 36.0
+	return Rect2(cx - bw * 0.5, -40.0, bw, muzzle + 48.0)
+
+
+func _tick_enemy_gun(delta: float) -> void:
+	if _entering or _winning:
+		return
+	var busy: bool = false
+	for foe in _foes:
+		if not bool(foe.get("alive", false)):
+			foe["tele"] = 0.0
+			continue
+		var tele: float = float(foe.get("tele", 0.0))
+		if tele <= 0.0:
+			continue
+		busy = true
+		tele -= delta
+		foe["tele"] = tele
+		if tele <= 0.0:
+			foe["tele"] = 0.0
+			_spawn_e_shot(foe)
+	_e_cd -= delta
+	if busy or _e_cd > 0.0:
+		return
+	if _e_live() >= ESHOT_MAX:
+		return
+	var sh: Dictionary = _pick_shooter()
+	if sh.is_empty():
+		_e_cd = 0.35
+		return
+	sh["tele"] = ESHOT_TELE
+	_e_cd = ESHOT_CD
+
+
+func _e_live() -> int:
+	var n: int = 0
+	for s in _e_shots:
+		var node: Control = s.get("n") as Control
+		if node != null and is_instance_valid(node):
+			n += 1
+	return n
+
+
+func _pick_shooter() -> Dictionary:
+	var front: Dictionary = {}
+	for foe in _foes:
+		if not bool(foe.get("alive", false)):
+			continue
+		var c: int = int(foe["c"])
+		var r: int = int(foe["r"])
+		if not front.has(c) or int(front[c]["r"]) < r:
+			front[c] = foe
+	var cand: Array[Dictionary] = []
+	for c in front:
+		var f: Dictionary = front[c]
+		if String(f.get("kind", "")) == "skelplane":
+			cand.append(f)
+	if cand.is_empty():
+		return {}
+	return cand[_rng.randi() % cand.size()]
+
+
+func _spawn_e_shot(foe: Dictionary) -> void:
+	var n: TextureRect = foe.get("n") as TextureRect
+	if n == null or not is_instance_valid(n) or not is_instance_valid(_field):
+		return
+	var s := TextureRect.new()
+	s.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	s.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	s.size = Vector2(ESHOT_W, ESHOT_H)
+	s.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	s.z_index = 6
+	if _tex_eshot:
+		s.texture = _tex_eshot
+	else:
+		s.modulate = Color(0.95, 0.55, 0.2, 1.0)
+	s.position = n.position + n.size * 0.5 - s.size * 0.5
+	s.position.y += n.size.y * 0.22
+	_field.add_child(s)
+	_e_shots.append({"n": s, "vel": Vector2(0.0, ESHOT_SPD)})
+
+
+func _tick_e_shots(delta: float) -> void:
+	var hurt: Rect2 = _witch_hurt_rect()
+	var i: int = _e_shots.size() - 1
+	while i >= 0:
+		var shot: Dictionary = _e_shots[i]
+		var s: Control = shot.get("n") as Control
+		if s == null or not is_instance_valid(s):
+			_e_shots.remove_at(i)
+			i -= 1
+			continue
+		s.position += Vector2(shot.get("vel", Vector2(0, ESHOT_SPD))) * delta
+		if s.position.y > _field.size.y + 40.0:
+			s.queue_free()
+			_e_shots.remove_at(i)
+			i -= 1
+			continue
+		if not _witch_dying and Rect2(s.position, s.size).intersects(hurt):
+			s.queue_free()
+			_e_shots.remove_at(i)
+			_begin_crash()
+			return
+		i -= 1
+
+
+func _clear_e_shots_in(beam: Rect2) -> void:
+	var i: int = _e_shots.size() - 1
+	while i >= 0:
+		var shot: Dictionary = _e_shots[i]
+		var s: Control = shot.get("n") as Control
+		if s == null or not is_instance_valid(s):
+			_e_shots.remove_at(i)
+			i -= 1
+			continue
+		if beam.intersects(Rect2(s.position, s.size)):
+			s.queue_free()
+			_e_shots.remove_at(i)
 		i -= 1
 
 
@@ -507,9 +709,13 @@ func _spawn_wave() -> void:
 	_dir = 1.0 if (_wave % 2) == 1 else -1.0
 	_entering = true
 	_enter_t = 0.0
+	var mask: Array = _wave_mask()
 	for r in range(ROWS):
+		var row: Array = mask[r]
 		for c in range(COLS):
-			var kind: String = String(FOE_CYCLE[(c + r) % FOE_CYCLE.size()])
+			if int(row[c]) == 0:
+				continue
+			var kind: String = String(FOE_CYCLE[_rng.randi() % FOE_CYCLE.size()])
 			var n := TextureRect.new()
 			n.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			n.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -522,7 +728,7 @@ func _spawn_wave() -> void:
 			_field.add_child(n)
 			_foes.append({
 				"n": n, "kind": kind, "c": c, "r": r,
-				"alive": true, "dying": false, "rot": 0.0,
+				"alive": true, "dying": false, "stun": 0.0, "tele": 0.0, "rot": 0.0,
 				"hp": int(FOE_HP.get(kind, 2)),
 				"kb": Vector2.ZERO, "kv": Vector2.ZERO,
 				"hit_t": 0.0, "shake": Vector2.ZERO,
@@ -530,6 +736,26 @@ func _spawn_wave() -> void:
 			})
 			_spawned += 1
 	_layout_foes(0.0)
+
+
+func _wave_mask() -> Array:
+	var mask: Array = []
+	var filled: int = 0
+	for _r in range(ROWS):
+		var pair: int = _rng.randi_range(1, 3)
+		if _rng.randf() < 0.14:
+			pair = 0
+		if _rng.randf() < 0.22:
+			pair = 3
+		var a: int = (pair >> 1) & 1
+		var b: int = pair & 1
+		var row: Array = [a, b, b, a]
+		mask.append(row)
+		for v in row:
+			filled += int(v)
+	if filled < 6:
+		return [[1, 1, 1, 1], [1, 0, 0, 1], [1, 1, 1, 1], [0, 1, 1, 0]]
+	return mask
 
 
 func _slot(foe: Dictionary) -> Vector2:
@@ -546,6 +772,20 @@ func _layout_foes(delta: float) -> void:
 		if n == null or not is_instance_valid(n):
 			continue
 		if bool(foe.get("dying", false)):
+			var stun: float = float(foe.get("stun", 0.0))
+			if stun > 0.0:
+				stun = maxf(0.0, stun - delta)
+				foe["stun"] = stun
+				var a: float = 14.0 * (stun / KILL_STUN)
+				var shake := Vector2(_rng.randf_range(-a, a), _rng.randf_range(-a, a))
+				n.modulate = KILL_FLASH
+				n.position = _slot(foe) + shake
+				if stun <= 0.0:
+					var rot0: float = float(foe.get("rot", 0.0))
+					foe["fall_v"] = Vector2(sin(rot0) * 220.0, 90.0)
+					if is_instance_valid(n):
+						n.z_index = 5
+				continue
 			_tick_death(foe, n, delta)
 			continue
 		if not bool(foe.get("alive", false)):
@@ -569,6 +809,9 @@ func _layout_foes(delta: float) -> void:
 			var a: float = 5.0 * (hit_t / 0.14)
 			shake = Vector2(_rng.randf_range(-a, a), _rng.randf_range(-a, a))
 			n.modulate = HIT_FLASH.lerp(Color.WHITE, 1.0 - hit_t / 0.14)
+		elif float(foe.get("tele", 0.0)) > 0.0:
+			var pulse: float = 0.5 + 0.5 * sin(_t * 28.0)
+			n.modulate = ESHOT_FLASH.lerp(Color.WHITE, 1.0 - pulse)
 		else:
 			n.modulate = Color.WHITE
 		n.position = _slot(foe) + kb + shake
@@ -588,15 +831,16 @@ func _die_foe(foe: Dictionary) -> void:
 		return
 	foe["alive"] = false
 	foe["dying"] = true
+	foe["stun"] = KILL_STUN
+	foe["hit_t"] = 0.0
 	_kills += 1
 	_hoy += 1
+	_gold_target = float(_kills) * _coin_val
 	_update_hud()
 	var n: TextureRect = foe.get("n") as TextureRect
-	var rot: float = float(foe.get("rot", 0.0))
-	var fall := Vector2(sin(rot) * 220.0, 90.0)
-	foe["fall_v"] = fall
 	if is_instance_valid(n):
-		n.z_index = 5
+		n.modulate = KILL_FLASH
+		_fly_kill_coins(n.global_position + n.size * 0.5)
 	if String(foe.get("kind", "")) == "zombiglide":
 		_explode_kamikaze(foe)
 
@@ -669,16 +913,18 @@ func _fire_hoy() -> void:
 	_kick_shake()
 	_slam("ХОЙ!")
 	_play_hoy_beam()
-	var max_r: int = -1
+	var beam: Rect2 = _hoy_hit_rect()
+	_clear_e_shots_in(beam)
+	var dmg: int = Balance.SALVO_HOY_DMG
 	for foe in _foes:
-		if bool(foe.get("alive", false)):
-			max_r = maxi(max_r, int(foe["r"]))
-	if max_r < 0:
-		_update_hud()
-		return
-	for foe in _foes:
-		if bool(foe.get("alive", false)) and int(foe["r"]) == max_r:
-			_die_foe(foe)
+		if not bool(foe.get("alive", false)):
+			continue
+		var n: TextureRect = foe.get("n") as TextureRect
+		if n == null or not is_instance_valid(n):
+			continue
+		var r := Rect2(n.position + Vector2(18, 18), n.size - Vector2(36, 36))
+		if r.intersects(beam):
+			_hurt_foe(foe, dmg)
 	_update_hud()
 
 
@@ -782,7 +1028,7 @@ func _tick_shake(delta: float) -> void:
 
 func _update_hud() -> void:
 	if is_instance_valid(_hud):
-		_hud.text = "ЗАЛП · ∞" if _infinite else "ЗАЛП · %d с" % maxi(0, ceili(_time_left))
+		_hud.text = "ПОЛЁТ · ∞" if _infinite else "ПОЛЁТ · %d с" % maxi(0, ceili(_time_left))
 	if is_instance_valid(_hoy_lab):
 		if _hoy >= Balance.SALVO_HOY_KILLS:
 			_hoy_lab.text = "ТАП — ХОЙ"
@@ -791,19 +1037,139 @@ func _update_hud() -> void:
 			_hoy_lab.text = "ХОЙ %d / %d" % [_hoy, Balance.SALVO_HOY_KILLS]
 			_hoy_lab.add_theme_color_override("font_color", GOLD)
 	if is_instance_valid(_gold_label):
-		_gold_label.text = "сбито %d" % _kills
+		_gold_label.text = _fmt_gold(_gold_shown)
+
+
+func _fmt_gold(n: float) -> String:
+	if n < 1000.0:
+		return str(int(round(n)))
+	var i := 0
+	var x: float = n
+	while x >= 1000.0 and i < GOLD_UNITS.size() - 1:
+		x /= 1000.0
+		i += 1
+	var s := "%.2f" % x
+	if s.ends_with(".00"):
+		s = s.substr(0, s.length() - 3)
+	elif s.ends_with("0"):
+		s = s.substr(0, s.length() - 1)
+	return s + GOLD_UNITS[i]
+
+
+func _tick_gold_roll(delta: float) -> void:
+	_gold_shown = lerpf(_gold_shown, _gold_target, clampf(delta * 7.0, 0.0, 1.0))
+	if absf(_gold_shown - _gold_target) < 1.0:
+		_gold_shown = _gold_target
+	if is_instance_valid(_gold_label):
+		_gold_label.text = _fmt_gold(_gold_shown)
+
+
+func _fly_kill_coins(from_global: Vector2) -> void:
+	if _tex_gold == null or not is_instance_valid(_gold_label):
+		return
+	var from_pos: Vector2 = from_global - global_position
+	var to_n: Control = _gold_icon if is_instance_valid(_gold_icon) else _gold_label
+	var to_pos: Vector2 = to_n.global_position + to_n.size * 0.5 - global_position
+	var n: int = _rng.randi_range(6, 10)
+	for i in n:
+		var sz: float = _rng.randf_range(16.0, 26.0)
+		var ico := TextureRect.new()
+		ico.texture = _tex_gold
+		ico.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ico.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ico.size = Vector2(sz, sz)
+		ico.pivot_offset = ico.size * 0.5
+		ico.scale = Vector2.ZERO
+		ico.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ico.z_index = 30
+		add_child(ico)
+		_fly_one_coin(ico, from_pos, to_pos, i)
+	_pulse_gold()
+
+
+func _fly_one_coin(coin: Control, from_pos: Vector2, to_pos: Vector2, idx: int) -> void:
+	var half: Vector2 = coin.size * 0.5
+	var origin: Vector2 = from_pos + Vector2(_rng.randf_range(-10.0, 10.0), _rng.randf_range(-10.0, 10.0))
+	coin.position = origin - half
+	var tw := create_tween()
+	tw.tween_interval(idx * 0.012)
+	var ang: float = _rng.randf() * TAU
+	var burst_pos: Vector2 = origin + Vector2(cos(ang), sin(ang)) * _rng.randf_range(52.0, 118.0)
+	burst_pos.y -= _rng.randf_range(8.0, 36.0)
+	var mid: Vector2 = (burst_pos + to_pos) * 0.5 + Vector2(_rng.randf_range(-48.0, 48.0), _rng.randf_range(-90.0, -24.0))
+	var burst_dur: float = _rng.randf_range(0.11, 0.16)
+	var home_dur: float = _rng.randf_range(0.34, 0.48)
+	tw.set_parallel(true)
+	tw.tween_property(coin, "scale", Vector2(1.2, 1.2), 0.08).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(coin, "position", burst_pos - half, burst_dur).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.set_parallel(false)
+	tw.set_parallel(true)
+	tw.tween_property(coin, "scale", Vector2.ONE, 0.08).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tw.tween_method(
+		func(t: float) -> void:
+			if is_instance_valid(coin):
+				coin.position = _bezier(burst_pos, mid, to_pos, t) - half,
+		0.0, 1.0, home_dur
+	).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.set_parallel(false)
+	tw.tween_callback(coin.queue_free)
+
+
+func _bezier(a: Vector2, b: Vector2, c: Vector2, t: float) -> Vector2:
+	return a.lerp(b, t).lerp(b.lerp(c, t), t)
+
+
+func _pulse_gold() -> void:
+	var ic: Control = _gold_icon if is_instance_valid(_gold_icon) else _gold_label
+	if ic == null or not is_instance_valid(ic):
+		return
+	ic.pivot_offset = ic.size * 0.5
+	var tw := create_tween()
+	tw.tween_interval(0.28)
+	for _n in 3:
+		tw.tween_property(ic, "scale", Vector2(1.28, 1.28), 0.14).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		tw.tween_property(ic, "scale", Vector2.ONE, 0.16).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+
+
+func _slam_area() -> Vector2:
+	var s: Vector2 = size
+	if s.x < 8.0:
+		s = get_viewport().get_visible_rect().size
+	return s
+
+
+func _slam_text_size(text: String, font_px: int) -> Vector2:
+	var font: Font = _header_font if _header_font else ThemeDB.fallback_font
+	return font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_CENTER, -1, font_px) + Vector2(32, 32)
+
+
+func _slam_font_px(text: String, area: Vector2) -> int:
+	var want := 110 if text.contains("\n") else 150
+	var lo := 36
+	var hi := want
+	var best := lo
+	var budget := Vector2(maxf(area.x - 48.0, 80.0), area.y * 0.48)
+	while lo <= hi:
+		var mid: int = (lo + hi) / 2
+		var ms: Vector2 = _slam_text_size(text, mid)
+		if ms.x <= budget.x and ms.y <= budget.y:
+			best = mid
+			lo = mid + 1
+		else:
+			hi = mid - 1
+	return best
 
 
 func _slam(text: String) -> void:
-	var area: Vector2 = size
-	if area.x < 8.0:
-		area = get_viewport().get_visible_rect().size
+	var area: Vector2 = _slam_area()
+	var font_px: int = _slam_font_px(text, area)
 	var slam := Label.new()
 	slam.text = text
 	slam.set_anchors_preset(Control.PRESET_FULL_RECT)
 	slam.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	slam.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	slam.add_theme_font_size_override("font_size", 96)
+	slam.clip_text = false
+	slam.add_theme_font_size_override("font_size", font_px)
 	slam.add_theme_color_override("font_color", SLAM_GOLD)
 	slam.add_theme_constant_override("outline_size", 16)
 	slam.add_theme_color_override("font_outline_color", BLOOD)
@@ -811,14 +1177,22 @@ func _slam(text: String) -> void:
 	slam.z_index = 40
 	if _header_font:
 		slam.add_theme_font_override("font", _header_font)
+	slam.pivot_offset = area * 0.5
+	slam.scale = Vector2(1.85, 1.85)
+	slam.modulate.a = 0.0
 	add_child(slam)
 	var st := create_tween()
-	st.tween_property(slam, "modulate:a", 0.0, 0.7).set_delay(0.35)
+	st.set_parallel(true)
+	st.tween_property(slam, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	st.tween_property(slam, "modulate:a", 1.0, 0.12)
+	st.set_parallel(false)
+	st.tween_interval(0.35)
+	st.tween_property(slam, "modulate:a", 0.0, 0.32)
 	st.tween_callback(slam.queue_free)
 
 
 func _start_win() -> void:
-	if _ended or _winning:
+	if _ended or _winning or _witch_dying:
 		return
 	_winning = true
 	_live = false
@@ -828,15 +1202,47 @@ func _start_win() -> void:
 	_finish(false)
 
 
-func _fail() -> void:
+func _begin_crash() -> void:
+	if _ended or _winning or _witch_dying:
+		return
+	_witch_dying = true
+	_live = false
+	_holding = false
+	_witch_stun = CRASH_STUN
+	_witch_fall = Vector2(_rng.randf_range(-90.0, 90.0), 80.0)
+	_kick_shake()
+
+
+func _tick_witch_crash(delta: float) -> void:
+	if not is_instance_valid(_witch):
+		_crash_finish()
+		return
+	_t += delta
+	if _witch_stun > 0.0:
+		_witch_stun -= delta
+		var on: bool = int(_t * 22.0) % 2 == 0
+		_witch.modulate = KILL_FLASH if on else Color(0.35, 0.35, 0.4, 1.0)
+		var a: float = 10.0 * clampf(_witch_stun / CRASH_STUN, 0.0, 1.0)
+		_witch.position = Vector2(_witch.position.x + _rng.randf_range(-a, a), _home.y + _rng.randf_range(-a, a))
+		if _witch_stun <= 0.0:
+			_witch.modulate = Color.WHITE
+		return
+	_witch_fall.y += 560.0 * delta
+	_witch.position += _witch_fall * delta
+	_witch.rotation += 2.1 * delta
+	_witch.scale = _witch.scale.lerp(Vector2(0.14, 0.14), 1.0 - exp(-4.4 * delta))
+	_witch.modulate.a = lerpf(_witch.modulate.a, 0.0, 1.0 - exp(-2.8 * delta))
+	if _witch.modulate.a < 0.08 or _witch.position.y > _field.size.y + 90.0:
+		_crash_finish()
+
+
+func _crash_finish() -> void:
 	if _ended or _winning:
 		return
 	_winning = true
-	_live = false
-	_holding = false
-	_slam("ПРОРВАЛИ!")
-	_kick_shake()
-	await get_tree().create_timer(0.7).timeout
+	_witch_dying = false
+	_slam("ПОДБИЛИ")
+	await get_tree().create_timer(0.85).timeout
 	_finish(true)
 
 

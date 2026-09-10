@@ -25,8 +25,8 @@ const F_RES := 30        # единый размер верхних ресурс
 const F_BOSS := 42       # крупный текст босса
 const PORTRAIT_H := 150  # портрет в рельсе Труппы (и модалка)
 const CARD_W := 166.0    # ширина карточки = кнопка xN
-const APP_VERSION := "1.0.5"               # футер настроек; синхронно с version/name в export_presets
-const APP_VERSION_CODE := 105            # синхронно с version/code; для проверки обновления
+const APP_VERSION := "1.0.6"               # футер настроек; синхронно с version/name в export_presets
+const APP_VERSION_CODE := 106            # синхронно с version/code; для проверки обновления
 const STORE_URL := "https://www.rustore.ru/catalog/app/com.punkfairytale.balagan"
 const REVIEW_WITCH_PATH := "res://art/ui/review_witch.png"  # спец-арт; иначе troupe witch
 const REVIEW_ARM_DELAY := 1.8
@@ -262,6 +262,10 @@ var _fresh_btn: Button = null
 
 # --- Босс: телеграф / победа / поражение -------------------------------------
 var _boss_layer: CanvasLayer = null
+var _catch_layer: CanvasLayer = null
+var _catch_game: Control = null
+var _catch_stash: Array = []
+var _catch_fading: bool = false
 var _boss_banner: Node = null           # текущий босс-баннер (один за раз; новый перебивает старый)
 
 # --- Барки труппы (реплики над панком, не блокируют) ---
@@ -373,6 +377,17 @@ var _side_right: VBoxContainer = null
 var _side_afisha: Dictionary = {}       # root/title/btn/icon/ph/foot/shown
 var _side_review: Dictionary = {}     # «Хвала» под афишей — пока не ушли в стор
 var _side_klad: Dictionary = {}
+var _side_catch: Dictionary = {}
+var _side_salvo_dbg: Dictionary = {}
+var _catch_offering: bool = false
+var _catch_t: float = -1.0              # <0 не взведён; иначе секунды фазы (ожидание / окно)
+var _catch_retry_used: bool = false     # один ролик-ретрай на окно слота
+var _catch_run_retry: bool = false      # текущий забег начат с ролика
+var _interlude_kind: String = "salvo"   # очередь: залп ↔ ловец (прототип стартует с залпа)
+var _interlude_playing: String = "catch"
+var _interlude_sandbox: bool = false    # редактор: бесконечный залп, без очереди/золота
+var _catch_offer: Control = null
+var _catch_offer_box: Control = null
 var _side_x2: Dictionary = {}
 var _x2_reveal_armed: bool = false
 var _side_alert_ping_t: float = 0.0
@@ -478,9 +493,12 @@ const MUSIC_PATH := "res://audio/punk_clicker_music.mp3"
 const MUSIC_BASE_DB := -12.0          # фоновая громкость
 const MUSIC_LOUD_DB := -3.0           # громкость в панк-раже
 const MUSIC_MODAL_DUCK_DB := -2.0     # ~20% тише, пока открыта модалка
+const MUSIC_SILENCE_DB := -80.0
 var _music_player: AudioStreamPlayer = null
 var _music_modal_depth: int = 0
 var _music_break_pending_restart: bool = false
+var _music_isolate: bool = false      # антракт: без ража; позже сюда уникальный OST
+var _music_fade_tw: Tween = null
 var _music_dist: AudioEffectDistortion = null
 
 
@@ -1732,6 +1750,8 @@ func _pip_pop(p: Control) -> void:
 
 # --- Ввод --------------------------------------------------------------------
 func _on_tap() -> void:
+	if Game.minigame_lock:
+		return
 	var res: Dictionary = Game.player_tap()
 	_spawn_damage_number(res.damage, res.crit)
 	_flash_enemy()
@@ -1747,6 +1767,472 @@ func _on_reward_pressed() -> void:
 	if _reward_btn: _reward_btn.disabled = true
 	_side_sync_attention()
 	Monetization.show_rewarded("double_gold")
+
+func _on_salvo_debug_pressed() -> void:
+	if not OS.has_feature("editor"):
+		return
+	if Game.minigame_lock or _catch_fading:
+		return
+	_interlude_sandbox = true
+	_interlude_kind = "salvo"
+	_start_catch_minigame()
+
+
+func _on_catch_pressed() -> void:
+	if Game.minigame_lock or _ui_modal_busy() or Game.is_boss:
+		return
+	if not _catch_offering:
+		return
+	Analytics.report("minigame_offer_tap", {"kind": _interlude_kind, "stage": Game.stage, "left": int(ceili(_catch_t))})
+	_start_catch_minigame()
+
+func _interlude_scene_path() -> String:
+	if _interlude_playing == "salvo":
+		return "res://game/minigames/salvo/SalvoMinigame.tscn"
+	return "res://game/minigames/catch/CatchMinigame.tscn"
+
+
+func _sync_interlude_slot_look() -> void:
+	if _side_catch.is_empty():
+		return
+	var salvo: bool = _interlude_kind == "salvo"
+	var title: Label = _side_catch.get("title") as Label
+	if is_instance_valid(title):
+		title.text = "ЗАЛП!" if salvo else "ЗОЛОТО!"
+	var icon: TextureRect = _side_catch.get("icon") as TextureRect
+	if is_instance_valid(icon):
+		var path: String = "res://art/troupe/v3/witch.png" if salvo else "res://art/troupe/v3/jester.png"
+		var tex: Texture2D = _try_load_tex(path)
+		if tex:
+			icon.texture = tex
+			icon.visible = true
+
+
+func _advance_interlude_queue() -> void:
+	_interlude_kind = "catch" if _interlude_playing == "salvo" else "salvo"
+
+
+func _interlude_retry_placement() -> String:
+	return "salvo_retry" if _interlude_playing == "salvo" else "catch_retry"
+
+func _start_catch_minigame() -> void:
+	if Game.minigame_lock or _catch_fading:
+		return
+	if is_instance_valid(_catch_game):
+		return
+	_interlude_playing = _interlude_kind
+	var packed: PackedScene = load(_interlude_scene_path()) as PackedScene
+	if packed == null:
+		_interlude_sandbox = false
+		_toast("Антракт не собрался")
+		return
+	Game.minigame_lock = true
+	_catch_fading = true
+	_catch_retry_used = false
+	_catch_run_retry = false
+	await _fade_brief(func() -> void:
+		_catch_layer = CanvasLayer.new()
+		_catch_layer.layer = 72
+		_catch_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+		add_child(_catch_layer)
+		_catch_game = packed.instantiate() as Control
+		if _catch_game == null or not _catch_game.has_method("setup"):
+			if is_instance_valid(_catch_layer):
+				_catch_layer.queue_free()
+			_catch_layer = null
+			_catch_game = null
+			Game.minigame_lock = false
+			return
+		_catch_game.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_catch_layer.add_child(_catch_game)
+		_catch_hide_clicker()
+		_catch_game.setup({
+			"stage": Game.stage,
+			"duration": Balance.CATCH_DURATION_SEC,
+			"bg_path": _catch_random_bg(),
+			"infinite": _interlude_sandbox,
+		})
+		_catch_game.finished.connect(_on_catch_finished)
+	)
+	if not is_instance_valid(_catch_game):
+		_catch_fading = false
+		_catch_restore_clicker()
+		Game.minigame_lock = false
+		_toast("Антракт не собрался")
+		return
+	if is_instance_valid(_catch_game) and _catch_game.has_method("begin"):
+		_catch_game.begin()
+	_catch_fading = false
+	if not _interlude_sandbox:
+		_catch_offering = false
+		_catch_t = Balance.CATCH_CD_PLAY_SEC
+		_side_slot_set_visible(_side_catch, false)
+	Analytics.report("minigame_start", {
+		"kind": _interlude_playing,
+		"stage": Game.stage,
+		"retry": 1 if _catch_run_retry else 0,
+	})
+	_side_sync_attention()
+
+func _on_catch_finished(result: Dictionary) -> void:
+	if _catch_fading:
+		return
+	if _interlude_sandbox:
+		if not _catch_remount():
+			await _catch_leave_world(0.0, 0, true)
+			return
+		if is_instance_valid(_catch_game) and _catch_game.has_method("begin"):
+			_catch_game.begin()
+		return
+	var fail: bool = bool(result.get("fail", false))
+	var caught: int = int(result.get("caught", 0))
+	var gold: float = Game.catch_payout(caught, fail)
+	_report_catch_end(result, fail, gold)
+	if fail and not _catch_retry_used:
+		if not is_instance_valid(_catch_layer):
+			await _catch_leave_world(0.0, caught, true)
+			return
+		_show_catch_retry_offer()
+		return
+	await _catch_leave_world(gold, caught, fail)
+
+
+func _report_catch_end(result: Dictionary, fail: bool, gold: float) -> void:
+	Analytics.report("minigame_end", {
+		"kind": _interlude_playing,
+		"stage": Game.stage,
+		"outcome": "fail" if fail else "win",
+		"fail": 1 if fail else 0,
+		"retry": 1 if _catch_run_retry else 0,
+		"caught": int(result.get("caught", 0)),
+		"spawned_coins": int(result.get("spawned_coins", 0)),
+		"coins_missed": int(result.get("coins_missed", 0)),
+		"hazards_missed": int(result.get("hazards_missed", 0)),
+		"gold": String.num_scientific(gold),
+	})
+
+
+func _catch_leave_world(gold: float, caught: int, fail: bool) -> void:
+	if _catch_fading:
+		return
+	_catch_fading = true
+	_close_catch_offer(false)
+	await _fade_brief(func() -> void:
+		if is_instance_valid(_catch_game):
+			_catch_game.queue_free()
+		_catch_game = null
+		if is_instance_valid(_catch_layer):
+			_catch_layer.queue_free()
+		_catch_layer = null
+		_catch_restore_clicker()
+		Game.minigame_lock = false
+		if gold > 0.0:
+			Economy.add_gold(gold)
+	)
+	_catch_fading = false
+	if gold > 0.0:
+		_fly_coins(_global_center(_arena) if is_instance_valid(_arena) else Vector2(360, 640), _global_center(_gold_label), mini(18, maxi(6, caught / 2)), GOLD, _gold_tex, _gold_icon)
+	if fail:
+		if _interlude_playing == "salvo":
+			_toast("Подбили! Залп сгорел")
+		else:
+			_toast("Бомба! Монеты сгорели")
+	else:
+		if _interlude_playing == "salvo":
+			_toast("Сбили %d · +%s" % [caught, fmt(gold)])
+		else:
+			_toast("Собрали %d · +%s" % [caught, fmt(gold)])
+	_catch_offering = false
+	_catch_t = Balance.CATCH_CD_PLAY_SEC
+	_catch_retry_used = false
+	_catch_run_retry = false
+	if not _interlude_sandbox:
+		_advance_interlude_queue()
+	_interlude_sandbox = false
+	_side_sync_attention()
+
+
+func _show_catch_retry_offer() -> void:
+	if not is_instance_valid(_catch_layer):
+		return
+	_close_catch_offer(false)
+	_catch_offer = Control.new()
+	_catch_offer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_catch_offer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_catch_offer.z_index = 50
+	_catch_layer.add_child(_catch_offer)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.65)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_catch_offer.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_catch_offer.add_child(cc)
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _flat(DARK, BLOOD, 20, 2, UI_MODAL_PAD))
+	box.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
+	cc.add_child(box)
+	_catch_offer_box = box
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 14)
+	box.add_child(vb)
+	var t := Label.new()
+	t.text = "ПОДБИЛИ!" if _interlude_playing == "salvo" else "ВЗОРВАЛСЯ!"
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(t, F_BOSS, BLOOD)
+	if _header_font:
+		t.add_theme_font_override("font", _header_font)
+	vb.add_child(t)
+	var s := Label.new()
+	s.text = "Ряд у метлы. Ещё один залп?" if _interlude_playing == "salvo" else "Мешок сгорел. Ещё один дождь?"
+	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	s.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(s, F_BODY, TXT)
+	vb.add_child(s)
+	var watch := _settings_button("▶ Смотреть ролик (ещё раз)", WOOD, true)
+	watch.pressed.connect(_catch_watch_ad)
+	vb.add_child(watch)
+	var quit := _settings_button("Уйти с пустым мешком" if _interlude_playing != "salvo" else "Уйти без золота", SURF, false)
+	quit.pressed.connect(_catch_give_up_pressed)
+	vb.add_child(quit)
+	_pop_open(_catch_offer, box)
+
+
+func _close_catch_offer(play_close_sfx: bool = true) -> void:
+	if is_instance_valid(_catch_offer):
+		_pop_close_free(_catch_offer, _catch_offer_box, play_close_sfx)
+	_catch_offer = null
+	_catch_offer_box = null
+
+
+func _catch_watch_ad() -> void:
+	_close_catch_offer(false)
+	Monetization.show_rewarded(_interlude_retry_placement())
+
+
+func _catch_give_up_pressed() -> void:
+	_close_catch_offer(false)
+	await _catch_leave_world(0.0, 0, true)
+
+
+func _catch_remount() -> bool:
+	var packed: PackedScene = load(_interlude_scene_path()) as PackedScene
+	if packed == null:
+		return false
+	if is_instance_valid(_catch_game):
+		if _catch_game.finished.is_connected(_on_catch_finished):
+			_catch_game.finished.disconnect(_on_catch_finished)
+		var old: Node = _catch_game
+		_catch_game = null
+		if old.get_parent() != null:
+			old.get_parent().remove_child(old)
+		old.free()
+	if not is_instance_valid(_catch_layer):
+		_catch_layer = CanvasLayer.new()
+		_catch_layer.layer = 72
+		_catch_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+		add_child(_catch_layer)
+	_catch_game = packed.instantiate() as Control
+	if _catch_game == null or not _catch_game.has_method("setup"):
+		_catch_game = null
+		return false
+	_catch_game.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_catch_layer.add_child(_catch_game)
+	_catch_game.setup({
+		"stage": Game.stage,
+		"duration": Balance.CATCH_DURATION_SEC,
+		"bg_path": _catch_random_bg(),
+		"infinite": _interlude_sandbox,
+	})
+	_catch_game.finished.connect(_on_catch_finished)
+	return true
+
+
+func _catch_replay_from_ad() -> void:
+	if _catch_fading:
+		return
+	_catch_retry_used = true
+	_catch_run_retry = true
+	_catch_fading = true
+	await _fade_brief(func() -> void:
+		if not _catch_remount():
+			if is_instance_valid(_catch_layer):
+				_catch_layer.queue_free()
+			_catch_layer = null
+			_catch_restore_clicker()
+			Game.minigame_lock = false
+	, false)
+	_catch_fading = false
+	if not is_instance_valid(_catch_game):
+		_toast("Антракт не собрался")
+		_catch_run_retry = false
+		_catch_t = Balance.CATCH_CD_PLAY_SEC
+		_side_sync_attention()
+		return
+	if _catch_game.has_method("begin"):
+		_catch_game.begin()
+	Analytics.report("minigame_start", {
+		"kind": _interlude_playing,
+		"stage": Game.stage,
+		"retry": 1,
+	})
+	_side_sync_attention()
+
+func _catch_arm_first() -> void:
+	if Game.store_shot_mode:
+		return
+	if _catch_t >= 0.0:
+		return
+	_catch_offering = false
+	_catch_t = 4.0 if OS.has_feature("editor") else Balance.CATCH_FIRST_DELAY_SEC
+
+
+func _catch_frozen() -> bool:
+	if not _tut_done or _tut_step >= 0:
+		return true
+	if Game.minigame_lock or _catch_fading:
+		return true
+	if Game.is_boss:
+		return true
+	if _ui_modal_busy():
+		return true
+	if Game.store_shot_mode:
+		return true
+	return false
+
+
+func _catch_refresh_foot() -> void:
+	if _side_catch.is_empty() or not is_instance_valid(_side_catch.get("foot")):
+		return
+	var foot: Label = _side_catch.foot
+	if _catch_offering and _catch_t > 0.0:
+		foot.text = _fmt_secs_hms(maxi(0, ceili(_catch_t)))
+		foot.add_theme_color_override("font_color", GOLD)
+	else:
+		foot.text = ""
+
+
+func _catch_begin_offer() -> void:
+	_catch_offering = true
+	_catch_t = Balance.CATCH_OFFER_SEC
+	_sync_interlude_slot_look()
+	_side_slot_set_visible(_side_catch, true)
+	_catch_refresh_foot()
+	Analytics.report("minigame_offer_show", {"kind": _interlude_kind, "stage": Game.stage})
+	_side_sync_attention()
+
+
+func _catch_expire() -> void:
+	_catch_offering = false
+	_catch_t = Balance.CATCH_CD_MISS_SEC
+	_side_slot_set_visible(_side_catch, false)
+	_catch_refresh_foot()
+	Analytics.report("minigame_offer_expire", {"kind": _interlude_kind, "stage": Game.stage})
+	_side_sync_attention()
+
+
+func _tick_catch_offer(delta: float) -> void:
+	if _catch_t < 0.0:
+		return
+	if _catch_frozen():
+		if not _side_catch.is_empty() and bool(_side_catch.get("shown", false)):
+			_side_slot_set_visible(_side_catch, false)
+			_side_sync_attention()
+		return
+	if _catch_offering:
+		if not bool(_side_catch.get("shown", false)):
+			_side_slot_set_visible(_side_catch, true)
+			_side_sync_attention()
+		_catch_t -= delta
+		_catch_refresh_foot()
+		if _catch_t <= 0.0:
+			_catch_expire()
+		return
+	if bool(_side_catch.get("shown", false)):
+		_side_slot_set_visible(_side_catch, false)
+	_catch_t -= delta
+	if _catch_t <= 0.0:
+		_catch_begin_offer()
+
+
+func _catch_random_bg() -> String:
+	var n: int = LOC_BG_PATHS.size()
+	if n <= 0:
+		return BG_TEX_PATH
+	var cur: int = (Game.location() - 1) % n
+	var idx: int = randi() % n
+	if n > 1 and idx == cur:
+		idx = (idx + 1) % n
+	return String(LOC_BG_PATHS[idx])
+
+func _catch_hide_clicker() -> void:
+	_catch_stash.clear()
+	for c in get_children():
+		if c == _fade_layer or c == _catch_layer:
+			continue
+		if not (c is CanvasItem):
+			continue
+		var ci := c as CanvasItem
+		_catch_stash.append({"n": ci, "v": ci.visible})
+		ci.visible = false
+
+func _catch_restore_clicker() -> void:
+	for e in _catch_stash:
+		var n: CanvasItem = e.get("n") as CanvasItem
+		if is_instance_valid(n):
+			n.visible = bool(e.get("v", true))
+	_catch_stash.clear()
+
+func _ensure_fade_layer() -> void:
+	if _fade_rect != null:
+		return
+	_fade_layer = CanvasLayer.new()
+	_fade_layer.layer = UI_Z_FADE
+	_fade_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_fade_layer)
+	_fade_rect = ColorRect.new()
+	_fade_rect.color = Color(0, 0, 0, 0.0)
+	_fade_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fade_layer.add_child(_fade_rect)
+	_fade_label = Label.new()
+	_fade_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fade_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_fade_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_lab(_fade_label, F_BOSS, BLOOD)
+	if _header_font:
+		_fade_label.add_theme_font_override("font", _header_font)
+	_fade_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fade_rect.add_child(_fade_label)
+
+func _fade_brief(mid: Callable, restart_music: bool = true) -> void:
+	_ensure_fade_layer()
+	_fade_rect.visible = true
+	_fade_rect.color.a = 0.0
+	_fade_label.text = ""
+	_fade_label.modulate.a = 0.0
+	var t_in := _fade_rect.create_tween()
+	t_in.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	t_in.tween_property(_fade_rect, "color:a", 1.0, 0.18)
+	if restart_music:
+		_music_fade_player(MUSIC_SILENCE_DB, 0.18)
+	await t_in.finished
+	if restart_music:
+		_music_kill_fade()
+		if is_instance_valid(_music_player):
+			_music_player.stop()
+			_music_player.volume_db = 0.0
+	if mid.is_valid():
+		mid.call()
+	if restart_music:
+		_music_isolate = Game.minigame_lock
+		_music_restart_play()
+	var t_out := _fade_rect.create_tween()
+	t_out.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	t_out.tween_property(_fade_rect, "color:a", 0.0, 0.22)
+	await t_out.finished
+	if is_instance_valid(_fade_rect):
+		_fade_rect.visible = false
 
 func _on_rewarded(placement: String) -> void:
 	if placement == "double_gold":
@@ -1768,6 +2254,8 @@ func _on_rewarded(placement: String) -> void:
 		_punch(_boss_label)
 	elif placement == "offline_x2":
 		_collect_offline(2.0)        # ролик досмотрен — копилка удвоена
+	elif placement == "catch_retry" or placement == "salvo_retry":
+		_catch_replay_from_ad()
 	if is_instance_valid(_reward_btn):
 		_reward_btn.disabled = false
 
@@ -1794,6 +2282,9 @@ func _on_reward_failed(p: String) -> void:
 			_boss_ad_btn.disabled = false
 	elif p == "offline_x2":
 		_collect_offline(1.0)        # ролик не вышел — отдаём базовую копилку, не наказываем
+	elif p == "catch_retry" or p == "salvo_retry":
+		if Game.minigame_lock and is_instance_valid(_catch_layer):
+			_show_catch_retry_offer()
 	if _reward_btn: _reward_btn.disabled = false
 	_side_sync_attention()
 
@@ -2092,10 +2583,49 @@ func _apply_music_bus_volume() -> void:
 	var mi: int = AudioServer.get_bus_index("Music")
 	if mi == -1:
 		return
-	var db: float = lerpf(MUSIC_BASE_DB, MUSIC_LOUD_DB, _punk_intensity)
+	var db: float = MUSIC_BASE_DB if _music_isolate else lerpf(MUSIC_BASE_DB, MUSIC_LOUD_DB, _punk_intensity)
 	if _music_modal_depth > 0:
 		db += MUSIC_MODAL_DUCK_DB
 	AudioServer.set_bus_volume_db(mi, db)
+	_apply_music_dist()
+
+
+func _apply_music_dist() -> void:
+	if _music_dist == null:
+		return
+	if _music_isolate:
+		_music_dist.drive = 0.0
+		_music_dist.pre_gain = 0.0
+		return
+	_music_dist.drive = _punk_intensity * 0.35
+	_music_dist.pre_gain = _punk_intensity * 4.0
+
+
+func _music_kill_fade() -> void:
+	if _music_fade_tw != null and _music_fade_tw.is_valid():
+		_music_fade_tw.kill()
+	_music_fade_tw = null
+
+
+func _music_fade_player(to_db: float, sec: float) -> void:
+	if not is_instance_valid(_music_player):
+		return
+	_music_kill_fade()
+	_music_fade_tw = create_tween()
+	_music_fade_tw.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	_music_fade_tw.tween_property(_music_player, "volume_db", to_db, sec)
+
+
+func _music_restart_play() -> void:
+	_music_kill_fade()
+	if not is_instance_valid(_music_player):
+		return
+	_music_player.stop()
+	_music_player.volume_db = 0.0
+	# позже: if _music_isolate: stream = catch OST
+	if _music_on:
+		_music_player.play()
+	_apply_music_bus_volume()
 
 func _music_modal_push() -> void:
 	_music_modal_depth += 1
@@ -2283,6 +2813,7 @@ func _process(delta: float) -> void:
 			_refresh_daily()
 
 	_side_tick_attention(delta)
+	_tick_catch_offer(delta)
 
 	_process_punk(delta)
 	_process_parallax(delta)
@@ -2369,9 +2900,6 @@ func _process_punk(delta: float) -> void:
 
 	# музыка: плавно громче в раже + нарастающий лёгкий овердрайв («рёв»)
 	_apply_music_bus_volume()
-	if _music_dist:
-		_music_dist.drive = _punk_intensity * 0.35    # лёгкий, не «в кашу»
-		_music_dist.pre_gain = _punk_intensity * 4.0
 	if is_instance_valid(_punk_rect):
 		var on: bool = _punk_intensity > 0.001 and not _reduce_fx   # «меньше эффектов» гасит VHS
 		_punk_rect.visible = on
@@ -2636,6 +3164,10 @@ func _ui_modal_busy() -> bool:
 	if is_instance_valid(_char_layer):
 		return true
 	if is_instance_valid(_review_panel) and _review_panel.visible:
+		return true
+	if is_instance_valid(_catch_offer):
+		return true
+	if Game.minigame_lock:
 		return true
 	return false
 
@@ -4341,7 +4873,7 @@ func _build_sidebars() -> void:
 	_side_left.offset_left = SIDE_EDGE
 	_side_left.offset_top = SIDE_TOP
 	_side_left.offset_right = SIDE_EDGE + SIDE_W
-	_side_left.offset_bottom = SIDE_TOP + 420.0
+	_side_left.offset_bottom = SIDE_TOP + 520.0
 	_arena.add_child(_side_left)
 
 	_side_right = VBoxContainer.new()
@@ -4367,6 +4899,19 @@ func _build_sidebars() -> void:
 	_side_review.root.visible = false
 	_side_review["shown"] = false
 
+	_side_catch = _make_side_slot("ЗОЛОТО!", GOLD, "res://art/troupe/v3/jester.png", true)
+	_side_left.add_child(_side_catch.root)
+	_side_catch.btn.pressed.connect(_on_catch_pressed)
+	if is_instance_valid(_side_catch.get("title")):
+		_side_catch.title.add_theme_font_size_override("font_size", 22)
+	if OS.has_feature("editor"):
+		_side_salvo_dbg = _make_side_slot("ЗАЛП ∞", GOLD, "res://art/troupe/v3/witch.png", false)
+		_side_left.add_child(_side_salvo_dbg.root)
+		_side_salvo_dbg.btn.pressed.connect(_on_salvo_debug_pressed)
+		if is_instance_valid(_side_salvo_dbg.get("title")):
+			_side_salvo_dbg.title.add_theme_font_size_override("font_size", 20)
+		_side_slot_set_visible(_side_salvo_dbg, true, true)
+
 	_side_klad = _make_side_slot("КЛАД", GOLD, "res://art/ui/side/klad.png", false)
 	_side_right.add_child(_side_klad.root)
 	_side_klad.btn.pressed.connect(_on_reward_pressed)
@@ -4385,6 +4930,9 @@ func _build_sidebars() -> void:
 	_refresh_review_btn()
 	# Клад всегда на месте после билда (лёгкий pop)
 	_side_slot_set_visible(_side_klad, true, true)
+	_side_slot_set_visible(_side_catch, false, true)
+	if _tut_done:
+		_catch_arm_first()
 	_side_sync_attention()
 
 
@@ -4395,7 +4943,7 @@ func _side_text_outline(lab: Label) -> void:
 
 ## Блокирует сайдбар на время босс-оффера (поверх паузы — страховка от дыр в dim).
 func _side_set_input_blocked(blocked: bool) -> void:
-	for slot in [_side_afisha, _side_review, _side_klad, _side_x2]:
+	for slot in [_side_afisha, _side_review, _side_catch, _side_klad, _side_x2]:
 		if typeof(slot) != TYPE_DICTIONARY or slot.is_empty():
 			continue
 		var btn: Button = slot.get("btn") as Button
@@ -4709,6 +5257,11 @@ func _side_sync_attention() -> void:
 		_side_set_attention(_side_x2, SIDE_ATT_ALERT)
 	else:
 		_side_set_attention(_side_x2, SIDE_ATT_OFF)
+
+	if not _side_catch.is_empty() and bool(_side_catch.get("shown", false)) and _catch_offering and not Game.minigame_lock:
+		_side_set_attention(_side_catch, SIDE_ATT_CALL)
+	elif not _side_catch.is_empty():
+		_side_set_attention(_side_catch, SIDE_ATT_OFF)
 
 
 func _side_tick_attention(delta: float) -> void:
@@ -5297,6 +5850,7 @@ func _tut_finish() -> void:
 	_tut_bubble_locked = false
 	_save_settings()
 	Analytics.report("tutorial_done")
+	_catch_arm_first()
 	# клад-хинт больше не отсюда — после 1-го босса (+10с)
 	if is_instance_valid(_tut_bubble) and _tut_bubble.visible:
 		_tut_set_shown(false)

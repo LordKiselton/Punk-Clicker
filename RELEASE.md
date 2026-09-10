@@ -20,6 +20,8 @@
 2. `game/scenes/Main.gd` — `APP_VERSION` + `APP_VERSION_CODE`
 3. `docs/version.json` — `{ "code", "name" }` → GitHub Pages нудж
 
+**Следующий контентный апдейт:** **v1.0.7** — мини-игры (ловец + залп / Space Invaders). Пока в сторе 1.0.6 — не бампать `version/code` / `APP_VERSION` / `version.json`. Дизайн: [MINIGAMES.md](MINIGAMES.md).
+
 **Порядок:** сначала сборка и заливка APK → модерация/публикация в RuStore → **только потом** коммит+пуш `docs/version.json` в `main`. Иначе игроки на старой версии получат нудж, пока апдейта ещё нет в сторе. Пока билд на модерации — в Pages оставлять предыдущий `code`.
 
 ### Иконка

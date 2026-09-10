@@ -19,6 +19,7 @@
 - [RELEASE.md](RELEASE.md) — чеклист апдейта RuStore / стор-скрины
 - [METRICS.md](METRICS.md) — метрики, CR, гипотезы карточки
 - [SOCIAL.md](SOCIAL.md) — социальность без сервера
+- [MINIGAMES.md](MINIGAMES.md) — антракт **v1.0.7**: ловец + залп (Space Invaders); мош позже (бонус, без отката стадии)
 - [REVIEW_2026-08-28.md](REVIEW_2026-08-28.md) — ревью продукта и план v1.0.5
 - [HEALTH.md](HEALTH.md) · [METRICS.md](METRICS.md) — срез здоровья и метрик
 
