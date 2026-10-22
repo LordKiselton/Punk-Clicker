@@ -17,6 +17,7 @@ func _run() -> void:
 	_test_main_helpers()
 	_test_economy()
 	_test_game_formulas()
+	_test_minigames()
 	_test_save_migration_and_clamps()
 	_test_release_config()
 	print("=== Result: %d passed, %d failed ===" % [_passed, _failed])
@@ -157,6 +158,10 @@ func _reset_game_state() -> void:
 	Game.meta_levels.clear()
 	for id in Balance.PRESTIGE_ORDER:
 		Game.meta_levels[id] = 0
+	Game.loc_unlocked.clear()
+	Game.loc_shuffle = false
+	Game.loc_visual = 0
+	Game.loc_run_counts.clear()
 
 
 func _test_game_formulas() -> void:
@@ -168,6 +173,29 @@ func _test_game_formulas() -> void:
 	_check(Game.location() == 1, "last stage stays in current location")
 	Game.stage = Balance.STAGES_PER_LOCATION + 1
 	_check(Game.location() == 2, "next stage enters location 2")
+	_check(Balance.LOCATION_COUNT == 10, "ten art locations")
+	_reset_game_state()
+	Game.stage = Balance.STAGES_PER_LOCATION
+	Game.max_stage = Balance.STAGES_PER_LOCATION
+	Game._advance_stage()
+	_check(Game.loc_unlocked.has(0), "clearing first location unlocks forest into pool")
+	_check(not Game.loc_shuffle, "first pass stays linear")
+	_check(Game.visual_location() == 1, "first pass visual tracks logical location")
+	_reset_game_state()
+	Game.max_stage = Balance.PRESTIGE_UNLOCK_STAGE
+	Game.stage = Balance.PRESTIGE_UNLOCK_STAGE
+	Game._rebuild_loc_unlocks_from_progress()
+	Game.loc_shuffle = true
+	Game.loc_visual = 0
+	Game._pick_next_visual()
+	_check(Game.visual_location() == 0, "shuffle with only forest unlocked stays on forest")
+	_reset_game_state()
+	for i in Balance.LOCATION_COUNT:
+		Game._unlock_loc(i)
+	Game.loc_shuffle = true
+	Game.loc_visual = 3
+	Game._pick_next_visual()
+	_check(Game.visual_location() != 3, "shuffle avoids consecutive visual repeat")
 
 	Game.tap_level = 0
 	var tap_0: float = Game.tap_damage()
@@ -214,9 +242,42 @@ func _test_game_formulas() -> void:
 	_check(Balance.CATCH_FIRST_DELAY_SEC == 55.0, "catch first delay is after tutorial")
 	_check(Balance.CATCH_CD_MISS_SEC == 90.0, "catch miss cooldown is 90 seconds")
 	_check(Balance.CATCH_CD_PLAY_SEC == 150.0, "catch play cooldown is 150 seconds")
+	_check(Balance.CATCH_FIRST_BOMB_SEC == 23.0, "first catch run delays bombs until 23 seconds")
+	_check(Balance.MINIGAME_PAY_IDLE_SEC == 120.0, "minigame par pays 120s of wave idle")
+	_check(Balance.MINIGAME_PAY_KILL_FLOOR == 40.0, "minigame par floor is 40 wave kills")
+	_check(Balance.CATCH_SCORE_PAR == 90.0 and Balance.SALVO_SCORE_PAR == 96.0, "minigame score par is per kind")
+	_check(FileAccess.file_exists(ProjectSettings.globalize_path("res://audio/minigames/catch_blast.wav")), "catch explosion sfx exists")
+	var catch_src := FileAccess.get_file_as_string("res://game/minigames/catch/CatchMinigame.gd")
+	var host_src := FileAccess.get_file_as_string("res://game/scenes/Main.gd")
+	_check(catch_src.contains("Хватай меня и таскай повсюду, я соберу для тебя ЗОЛОТО!"), "catch intro step 0 copy")
+	_check(catch_src.contains("ЗОЛОТО — хватай! БОМБЫ — НЕ ХВАТАЙ!"), "catch intro step 1 copy")
+	_check(host_src.contains("if fail and not _catch_retry_used:"), "catch fail still offers retry overlay")
+	_check(host_src.contains("НАЖИВА!"), "minigame win shows loot conversion modal")
+	_check(host_src.contains("_payout_col(\"Золото\"") and host_src.contains("_payout_col(\"Серебро\""), "payout converts gold to silver")
+	_check(host_src.contains("Найми героя за серебро"), "clicker tutorial spends silver")
+	_check(str(Balance.PRESTIGE_NODES["gold"]["name"]) == "Звон серебра", "prestige gold node is named silver")
 	_check(Game.catch_payout(0, false) == 0.0, "zero coins pay nothing")
 	_check(Game.catch_payout(10, true) == 0.0, "catching a bomb pays nothing")
-	_check(Game.catch_payout(10, false) > Game.catch_payout(5, false), "more coins pay more gold")
+	_check(Game.catch_payout(40, false) > Game.catch_payout(10, false), "more coins pay more gold")
+	# На низких стадиях пол — очки (salvo 96 > catch 90). На высоких оба упираются в idle/kill и равны.
+	var catch_at_par: float = Game.minigame_payout("catch", 90, false)
+	var salvo_at_par: float = Game.minigame_payout("salvo", 96, false)
+	_check(salvo_at_par >= catch_at_par, "salvo par payout is never below catch par")
+	_check(Game.minigame_payout("catch", 300, false) >= 300.0, "conversion never pays less than score")
+	_check(host_src.contains("Золотой Дождь") and host_src.contains("Ведьмолет!"), "sidebar titles name each interlude")
+	_check(host_src.contains("_settings_toggle_row(\"Звук\""), "settings can mute sfx like music")
+	_check(host_src.contains("sfx_on"), "sfx toggle is persisted")
+	_check(host_src.contains("В кликер"), "zxc menu can return to clicker")
+	_check(host_src.contains("Input.is_physical_key_pressed(KEY_Z)"), "zxc chord is read in _input")
+	_check(not catch_src.contains("_gold_sneeze"), "catch HUD has no gold sneeze")
+	_check(FileAccess.get_file_as_string("res://game/autoload/UiSfx.gd").contains("p.bus = &\"SFX\""), "ui sfx play on sfx bus")
+	_check(host_src.contains("Мешок порвался! Еще дождя?"), "catch retry copy")
+	_check(host_src.contains("Черти подбили ведьму! Еще ведьмолет?"), "salvo retry copy")
+	_check(ResourceLoader.exists("res://art/ui/silver.png"), "clicker silver coin exists")
+	_check(catch_src.contains("res://art/ui/gold.png"), "catch rains gold coins")
+	var salvo_src := FileAccess.get_file_as_string("res://game/minigames/salvo/SalvoMinigame.gd")
+	_check(salvo_src.contains("res://art/ui/gold.png"), "salvo drops gold coins")
+	_check(host_src.contains("res://art/ui/silver.png"), "clicker wallet uses silver coin")
 	_check(ResourceLoader.exists("res://game/minigames/catch/CatchMinigame.tscn"), "catch scene exists")
 	_check(ResourceLoader.exists("res://art/troupe/v3/jester.png"), "catch sidebar uses v3 jester portrait")
 	for p in ["jester_idle", "jester_ul", "jester_dl", "jester_ur", "jester_dr", "catch_bomb"]:
@@ -225,8 +286,76 @@ func _test_game_formulas() -> void:
 	_check(ResourceLoader.exists("res://game/minigames/salvo/SalvoMinigame.tscn"), "salvo scene exists")
 	_check(Balance.SALVO_HOY_KILLS == 12, "salvo HOY costs 12 kills")
 	_check(Balance.SALVO_HOY_DMG == 8, "salvo HOY damage pierces current foes")
+	_check(salvo_src.contains("TAP_MAX_PX"), "salvo HOY is a short tap")
+	_check(salvo_src.contains("hoy_ready.gdshader"), "hoy ready uses silhouette glow")
+	_check(salvo_src.contains("WITCH_LIVES := 3"), "salvo has three lives")
+	_check(salvo_src.contains("ESHOT_SPD := 850.0"), "salvo enemy shots are faster")
+	_check(salvo_src.contains("catch_bomb.png"), "bat throws catch bomb")
+	_check(not salvo_src.contains("func _on_line_crossed"), "salvo has no broom-line fail")
 	for p in ["witch", "trollbat", "skelplane", "zombiglide", "sky_far", "loop_mist"]:
 		_check(FileAccess.file_exists(ProjectSettings.globalize_path("res://art/minigames/salvo_play/%s.png" % p)), "salvo sprite exists: " + p)
+
+
+func _test_minigames() -> void:
+	## Контракты антрактов v1.0.7: общий HUD, Ведьмолет!, hit-flash, победный пролёт.
+	var base_src := FileAccess.get_file_as_string("res://game/minigames/MinigameBase.gd")
+	var catch_src := FileAccess.get_file_as_string("res://game/minigames/catch/CatchMinigame.gd")
+	var salvo_src := FileAccess.get_file_as_string("res://game/minigames/salvo/SalvoMinigame.gd")
+	var host_src := FileAccess.get_file_as_string("res://game/scenes/Main.gd")
+	var base_c := _constants("res://game/minigames/MinigameBase.gd")
+	var salvo_c := _constants("res://game/minigames/salvo/SalvoMinigame.gd")
+
+	_check(float(base_c.get("HUD_MARGIN", 0.0)) == 72.0, "minigame HUD margin matches clicker safe inset")
+	_check(int(base_c.get("HUD_TIMER_FONT", 0)) == 42, "minigame timer font is unified")
+	_check(int(base_c.get("HUD_GOLD_FONT", 0)) == 30, "minigame gold font is unified")
+	_check(base_src.contains("func hud_safe_top"), "minigames share phone top safe-area helper")
+	_check(base_src.contains("func make_res_plate"), "minigames share resource plate helper")
+	_check(base_src.contains("func hud_play_top"), "salvo wave roof comes from shared HUD layout")
+	var roof: float = float(base_c.get("HUD_MARGIN", 0.0)) + float(base_c.get("HUD_ROW_H", 0.0)) \
+		+ float(base_c.get("HUD_BAR_GAP", 0.0)) + float(base_c.get("HUD_BAR_H", 0.0)) \
+		+ float(base_c.get("HUD_PLAY_GAP", 0.0))
+	_check(_approx(roof, 196.0), "default HUD play top is below bar+gap")
+
+	_check(catch_src.contains("HUD_TIMER_FONT") and salvo_src.contains("HUD_TIMER_FONT"), "catch and salvo use shared timer size")
+	_check(catch_src.contains("make_res_plate()") and salvo_src.contains("make_res_plate()"), "catch and salvo build resource plates")
+	_check(catch_src.contains("_gold_row.add_child(_gold_label)") and catch_src.contains("_gold_row.add_child(_gold_icon)"), "catch gold is number then icon")
+	_check(salvo_src.contains("_gold_row.add_child(_gold_label)") and salvo_src.contains("_gold_row.add_child(_gold_icon)"), "salvo gold is number then icon")
+	_check(catch_src.find("_gold_row.add_child(_gold_label)") < catch_src.find("_gold_row.add_child(_gold_icon)"), "catch adds label before icon")
+	_check(salvo_src.find("_gold_row.add_child(_gold_label)") < salvo_src.find("_gold_row.add_child(_gold_icon)"), "salvo adds label before icon")
+
+	_check(host_src.contains("func _park_wallet_right"), "clicker parks wallet on the right")
+	_check(host_src.contains("func _plate_wallet"), "clicker wraps wallet in a plate")
+	_check(host_src.contains("func _wallet_center"), "coin flights target wallet icon corner")
+	_check(host_src.contains("hb.add_child(lbl)") and host_src.contains("hb.add_child(ic)"), "clicker resource row is number then icon")
+	_check(host_src.find("hb.add_child(lbl)") < host_src.find("hb.add_child(ic)"), "clicker adds resource label before icon")
+	_check(host_src.contains("LeftCol") and host_src.contains("шестерёнка в левом верхнем"), "settings gear sits top-left")
+
+	_check(not salvo_src.contains("Полет Ведьм") and not host_src.contains("Полет Ведьм"), "old salvo title is gone")
+	_check(salvo_src.contains("Ведьмолет!") and host_src.contains("Ведьмолет!"), "salvo is named Ведьмолет!")
+	_check(salvo_src.contains("_slam(\"ВЕДЬМОЛЕТ!\")"), "salvo start slam uses new title")
+	_check(salvo_src.contains("Жми на Ведьму!"), "HOY ready copy matches punk language")
+	_check(FileAccess.file_exists(ProjectSettings.globalize_path("res://art/minigames/salvo_play/witch_heart.png")), "witch heart icon exists")
+	_check(salvo_src.contains("witch_heart.png"), "salvo lives use witch heart art")
+	_check(salvo_src.contains("func _pop_heart"), "lost hearts animate away")
+	_check(not salvo_src.contains("bg_color = BLOOD if i < _lives"), "salvo no longer dims life circles")
+
+	_check(float(salvo_c.get("WITCH_HIT_FLASH", 0.0)) == 0.2, "witch hit flash is a short pulse")
+	_check(salvo_src.contains("_hit_flash = WITCH_HIT_FLASH"), "damage sets red hit flash")
+	_check(salvo_src.contains("Color(2.8, 0.22, 0.16)"), "hit flash is bright red")
+	_check(salvo_src.contains("func _win_explode_foes") and salvo_src.contains("func _win_witch_away"), "win cinematic explodes foes then flies witch")
+	_check(salvo_src.contains("_origin_y_to = hud_play_top()"), "salvo wave starts below HUD")
+	_check(salvo_src.contains("Color(0.45, 1.0, 0.32"), "witch ready glow matches necro salvo green")
+	_check(ResourceLoader.exists("res://game/minigames/salvo/hoy_ready.gdshader"), "hoy ready shader exists")
+	_check(salvo_src.contains("call_deferred(\"_emit_done\""), "salvo finish emits after win coroutine")
+	_check(host_src.contains("old.queue_free()"), "sandbox remount frees minigame deferred")
+
+	_reset_game_state()
+	Game.stage = 1
+	var catch_par: float = Game.minigame_payout("catch", int(Balance.CATCH_SCORE_PAR), false)
+	var salvo_par: float = Game.minigame_payout("salvo", int(Balance.SALVO_SCORE_PAR), false)
+	_check(catch_par > 0.0 and salvo_par > 0.0, "minigame par payouts are positive at stage 1")
+	_check(Game.minigame_payout("catch", 0, false) == 0.0, "zero catch score pays nothing")
+	_check(Game.minigame_payout("salvo", 12, true) == 0.0, "failed salvo pays nothing")
 
 
 func _test_save_migration_and_clamps() -> void:
@@ -266,6 +395,8 @@ func _test_release_config() -> void:
 	var main_text := FileAccess.get_file_as_string("res://game/scenes/Main.gd")
 	_check(preset_text.count("tests/*") == 2, "tests are excluded from every export preset")
 	_check(preset_text.count("tools/*") == 2, "release tools are excluded from every export preset")
+	_check(preset_text.count("audio/minigames/catch_blast_candidates/*") == 2, "catch blast candidates are excluded from every export preset")
+	_check(preset_text.count("art/minigames/royal_candidates/*") == 2, "royal coin candidates are excluded from every export preset")
 	_check(preset_text.count("art/troupe/v1/*") == 2 and preset_text.count("art/troupe/v2/*") == 2, "old portrait packs are excluded from every export preset")
 	_check(not preset_text.contains("art/troupe/*.png"), "live v3 portraits are not caught by a broad exclude")
 	_check(not project_text.contains("McpBridge=\"*res://mcp_bridge.gd\""), "MCP bridge is absent from release autoloads")

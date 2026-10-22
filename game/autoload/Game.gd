@@ -81,6 +81,14 @@ var bells_pending: float = 0.0         # отложенные 40% рекордо
 var run_peak_stage: int = 1            # глубина текущего забега (для «гастрольного бонуса»)
 var boss_ad_active: bool = false       # реклама «×2 урон боссу» активна на этом боссе
 
+# --- Визуальный порядок локаций (арт/пул врагов; баланс stage→location() отдельно) ---
+# Первый проход линейный. После зачистки локация в пуле. На «Новой сказке» / 2-м
+# круге — взвешенный рандом из открытых без подрядного повтора.
+var loc_unlocked: Array = []           # 0-based индексы зачищенных хотя бы раз
+var loc_shuffle: bool = false          # false = линейный первый проход
+var loc_visual: int = 0                # текущий арт-слот 0..LOCATION_COUNT-1
+var loc_run_counts: Dictionary = {}    # idx → сколько раз выпал в текущем круге (веса)
+
 # --- «Афиша дня» ---------------------------------------------------------------
 var daily_day: int = 1                 # какой день цикла (1..7) ждёт клейма
 var daily_last_day_id: int = -1        # id суток (граница 04:00) последнего клейма
@@ -181,6 +189,68 @@ func _notification(what: int) -> void:
 # --- Производные величины (формулы) -----------------------------------------
 func location() -> int:
 	return int((stage - 1) / Balance.STAGES_PER_LOCATION) + 1
+
+# 0-based индекс арта/имени/пула врагов (не путать с логическим location()).
+func visual_location() -> int:
+	return clampi(loc_visual, 0, Balance.LOCATION_COUNT - 1)
+
+func _unlock_loc(idx: int) -> void:
+	var i: int = posmod(idx, Balance.LOCATION_COUNT)
+	if not loc_unlocked.has(i):
+		loc_unlocked.append(i)
+
+func _rebuild_loc_unlocks_from_progress() -> void:
+	var boundaries: int = int((maxi(1, max_stage) - 1) / Balance.STAGES_PER_LOCATION)
+	for i in boundaries:
+		_unlock_loc(i)
+
+func _sync_loc_visual_linear() -> void:
+	loc_visual = posmod(location() - 1, Balance.LOCATION_COUNT)
+
+func _pick_next_visual() -> void:
+	var pool: Array = []
+	for v in loc_unlocked:
+		pool.append(int(v))
+	if pool.is_empty():
+		pool.append(0)
+	var cands: Array = []
+	var weights: Array = []
+	var total: float = 0.0
+	for idx in pool:
+		var i: int = int(idx)
+		if i == loc_visual and pool.size() > 1:
+			continue
+		var used: float = float(loc_run_counts.get(i, 0))
+		var w: float = 1.0 / (1.0 + used)
+		cands.append(i)
+		weights.append(w)
+		total += w
+	if cands.is_empty():
+		cands = pool
+		weights = []
+		total = 0.0
+		for idx in cands:
+			weights.append(1.0)
+			total += 1.0
+	var r: float = randf() * total
+	var pick: int = int(cands[0])
+	for i in cands.size():
+		r -= float(weights[i])
+		if r <= 0.0:
+			pick = int(cands[i])
+			break
+	loc_visual = pick
+	loc_run_counts[pick] = int(loc_run_counts.get(pick, 0)) + 1
+
+# Смена логического слота локации (после advance stage).
+func _on_logical_location_changed(cleared_logical: int) -> void:
+	_unlock_loc(cleared_logical - 1)
+	if location() > Balance.LOCATION_COUNT:
+		loc_shuffle = true
+	if loc_shuffle:
+		_pick_next_visual()
+	else:
+		_sync_loc_visual_linear()
 
 func tap_damage() -> float:
 	return Balance.TAP_DAMAGE_BASE * pow(Balance.TAP_DAMAGE_GROWTH, tap_level) * prestige_tap_mult()
@@ -514,6 +584,11 @@ func do_prestige() -> int:
 	punk_time_left = 0.0
 	boss_pending_fail = false
 	reset_combo(true)
+	# Визуалы: новая сказка → пул открытых, без подрядного повтора
+	loc_shuffle = true
+	_rebuild_loc_unlocks_from_progress()
+	loc_run_counts.clear()
+	_pick_next_visual()
 	Economy.gold = prestige_start_gold()
 	Economy.gold_changed.emit(Economy.gold)
 	punk_charge_changed.emit(0.0)
@@ -550,15 +625,36 @@ func _enemy_gold() -> float:
 	return g * (Balance.BOSS_GOLD_MULT if is_boss else 1.0) * punk_gold_mult() * prestige_gold_mult()
 
 
-func catch_coin_value() -> float:
+func wave_gold() -> float:
 	var g: float = Balance.ENEMY_GOLD_BASE * pow(Balance.ENEMY_GOLD_GROWTH, stage - 1)
-	return maxf(1.0, g * Balance.CATCH_COIN_GOLD_FRAC) * prestige_gold_mult()
+	return g * prestige_gold_mult()
+
+
+func wave_idle_gold_per_sec() -> float:
+	var hp: float = Balance.ENEMY_HP_BASE * pow(Balance.ENEMY_HP_GROWTH, stage - 1)
+	if hp <= 0.0:
+		return 0.0
+	return total_dps() / hp * wave_gold()
+
+
+func minigame_score_par(kind: String) -> float:
+	if kind == "salvo":
+		return Balance.SALVO_SCORE_PAR
+	return Balance.CATCH_SCORE_PAR
+
+
+func minigame_payout(kind: String, score: int, fail: bool) -> float:
+	if fail or score <= 0:
+		return 0.0
+	var par: float = maxf(1.0, minigame_score_par(kind))
+	var skill: float = clampf(float(score) / par, 0.0, Balance.MINIGAME_SKILL_MAX)
+	var idle_leg: float = wave_idle_gold_per_sec() * Balance.MINIGAME_PAY_IDLE_SEC * skill
+	var kill_leg: float = wave_gold() * Balance.MINIGAME_PAY_KILL_FLOOR * skill
+	return maxf(maxf(idle_leg, kill_leg), float(score))  # никогда меньше очков: курс ≥ 1
 
 
 func catch_payout(caught: int, fail: bool) -> float:
-	if fail or caught <= 0:
-		return 0.0
-	return float(caught) * catch_coin_value()
+	return minigame_payout("catch", caught, fail)
 
 func _hit_enemy(amount: float) -> void:
 	if amount <= 0.0:
@@ -644,6 +740,7 @@ func reset_payout_preview() -> int:
 	return int(bells_pending) + repeat_bonus
 
 func _advance_stage() -> void:
+	var prev_loc: int = location()
 	kills_on_stage = 0
 	stage += 1
 	max_stage = max(max_stage, stage)
@@ -651,6 +748,8 @@ func _advance_stage() -> void:
 	if stage in [10, 25, 50, 100, 150, 200, 300] and max_stage == stage:   # веха впервые
 		Analytics.report("stage_up", {"stage": stage, "t_sec": int(_tlm_t), "prestige": _tlm_prestiges})
 	_tlm_row()   # телеметрия: точка кривой на каждой пройденной стадии
+	if location() != prev_loc:
+		_on_logical_location_changed(prev_loc)
 	stage_changed.emit(stage, location())
 	_spawn_enemy()
 
@@ -796,6 +895,10 @@ func _snapshot() -> Dictionary:
 		"daily_last_day_id": daily_last_day_id,
 		"daily_last_unix": daily_last_unix,
 		"daily_claims": daily_claims,
+		"loc_unlocked": loc_unlocked,
+		"loc_shuffle": loc_shuffle,
+		"loc_visual": loc_visual,
+		"loc_run_counts": loc_run_counts,
 		"time": int(Time.get_unix_time_from_system()),
 	}
 
@@ -846,6 +949,35 @@ func load_game() -> void:
 	daily_last_unix = maxi(0, int(data.get("daily_last_unix", 0)))
 	daily_claims = maxi(0, int(data.get("daily_claims", 0)))
 	_pending_offline_time = int(data.get("time", 0))
+	_load_loc_visual_state(data)
+
+
+func _load_loc_visual_state(data: Dictionary) -> void:
+	loc_unlocked.clear()
+	loc_run_counts.clear()
+	_rebuild_loc_unlocks_from_progress()
+	var saved_unlock = data.get("loc_unlocked", null)
+	if typeof(saved_unlock) == TYPE_ARRAY:
+		for v in saved_unlock:
+			_unlock_loc(int(v))
+	var boundaries: int = int((maxi(1, max_stage) - 1) / Balance.STAGES_PER_LOCATION)
+	if data.has("loc_shuffle"):
+		loc_shuffle = bool(data.get("loc_shuffle", false))
+	else:
+		# Миграция: полный арт-круг или уже ходили в «Новую сказку»
+		loc_shuffle = boundaries >= Balance.LOCATION_COUNT \
+			or (stage < max_stage and max_stage >= Balance.PRESTIGE_UNLOCK_STAGE)
+	var saved_counts = data.get("loc_run_counts", {})
+	if typeof(saved_counts) == TYPE_DICTIONARY:
+		for k in saved_counts.keys():
+			loc_run_counts[int(k)] = int(saved_counts[k])
+	if data.has("loc_visual"):
+		loc_visual = clampi(int(data.get("loc_visual", 0)), 0, Balance.LOCATION_COUNT - 1)
+	elif loc_shuffle and not loc_unlocked.is_empty():
+		_pick_next_visual()
+	else:
+		_sync_loc_visual_linear()
+
 
 func dev_boost_to_50() -> void:
 	# [ТЕСТ] Прыжок на стадию 50 с соответствующей прокачкой (для теста «Новой сказки»).
@@ -859,6 +991,9 @@ func dev_boost_to_50() -> void:
 		ally_levels[ALLY_ORDER[i]] = lvls[i] if i < lvls.size() else 0
 	Economy.add_gold(500000.0)
 	run_peak_stage = 50
+	_rebuild_loc_unlocks_from_progress()
+	if not loc_shuffle:
+		_sync_loc_visual_linear()
 	# начисляем черепа за «пройденную» глубину тем же сплитом 60/40
 	var target: int = prestige_target_bells()
 	var gain: int = target - int(bells_earned_total)
@@ -902,6 +1037,9 @@ func setup_store_shot(opts: Dictionary) -> void:
 		daily_last_day_id = int(opts.get("daily_last_day_id", _local_day_id(now) - 1))
 		daily_last_unix = int(opts.get("daily_last_unix", 0))
 	punk_charge = float(opts.get("punk_charge", 0.0))
+	_rebuild_loc_unlocks_from_progress()
+	if not loc_shuffle:
+		_sync_loc_visual_linear()
 	_spawn_enemy()
 	if opts.has("enemy_hp_ratio"):
 		enemy_hp = enemy_max_hp * clampf(float(opts.enemy_hp_ratio), 0.05, 1.0)
@@ -952,6 +1090,10 @@ func reset_progress() -> void:
 	daily_last_day_id = -1
 	daily_last_unix = 0
 	daily_claims = 0
+	loc_unlocked.clear()
+	loc_shuffle = false
+	loc_visual = 0
+	loc_run_counts.clear()
 	Economy.gold = 0.0
 	Economy.bells = 0
 	Economy.premium = 0

@@ -8,12 +8,16 @@ const TEMP_ALLOWED_SLOTS: PackedStringArray = [
 	"ui_reward_claim",
 	"ui_boss_stood",
 	"ui_new_tale",
+	"catch_blast",
+	"salvo_blast",
 ]
 
 const PATHS: Dictionary = {
 	"ui_click_nav": "res://audio/ui/jd_cursor_1.wav",
 	"ui_new_tale": "res://audio/ui/gtr_open_2.wav",
 	"ui_punk_full": "res://audio/ui/gtr_noise_1.wav",
+	"catch_blast": "res://audio/minigames/catch_blast.wav",
+	"salvo_blast": "res://audio/minigames/catch_blast.wav",
 }
 
 const RANDOM_PATHS: Dictionary = {
@@ -51,6 +55,8 @@ const VOLUME_DB: Dictionary = {
 	"ui_boss_stood": -6.0,
 	"ui_new_tale": -6.0,
 	"ui_punk_full": -8.0,   # было −6; ещё −20% громкости (−2 dB)
+	"catch_blast": -6.0,
+	"salvo_blast": -18.0,   # тот же взрыв ловца, тише на камикадзе
 }
 
 const UPGRADE_POOL_SIZE := 4
@@ -75,6 +81,7 @@ var _nav_last_ms: int = -9999
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_ensure_sfx_bus()
 	_modal_player = _make_player()
 	_event_player = _make_player()
 	_nav_player = _make_player()
@@ -98,10 +105,19 @@ func _ready() -> void:
 			_upgrade_streams.append(up)
 
 
+func _ensure_sfx_bus() -> void:
+	if AudioServer.get_bus_index("SFX") != -1:
+		return
+	var idx: int = AudioServer.bus_count
+	AudioServer.add_bus(idx)
+	AudioServer.set_bus_name(idx, "SFX")
+	AudioServer.set_bus_send(idx, "Master")
+
+
 func _make_player() -> AudioStreamPlayer:
 	var p := AudioStreamPlayer.new()
 	p.process_mode = Node.PROCESS_MODE_ALWAYS
-	p.bus = &"Master"
+	p.bus = &"SFX"
 	add_child(p)
 	return p
 

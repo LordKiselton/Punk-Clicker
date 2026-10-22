@@ -29,6 +29,7 @@ const LOCATION_BOSS_BELLS_MULT: float = 2.0  # ворота платят дво�
 const BOSS_GOLD_MULT: float = 10.0       # множитель золота с босса
 const BOSS_TIMER_SEC: float = 30.0       # таймер боя с боссом
 const STAGES_PER_LOCATION: int = 25      # арт: фон / пул врагов / музыка
+const LOCATION_COUNT: int = 10           # слотов арта (см. Main.LOCATIONS); баланс stage→location() не трогаем
 const LOCATION_BOSS_EVERY: int = 50      # ворота сложности — ритм как при старом SPL=50 (баланс не трогаем)
 
 # --- Соратники (труппа) — idle DPS -----------------------------------------
@@ -93,10 +94,10 @@ const PRESTIGE_START_GOLD_GROWTH: float = 3.5
 
 # Узлы дерева «Сказаний». per = эффект за уровень (числа — баланс-пасс через sim_balance.py).
 const PRESTIGE_NODES := {
-	"gold":    {"name": "Звон золота",   "desc": "Золото со всех источников: +60% за уровень.",            "per": 0.60, "cost": 20.0, "growth": 1.18, "cap": 80},
+	"gold":    {"name": "Звон серебра",  "desc": "Серебро со всех источников: +60% за уровень.",          "per": 0.60, "cost": 20.0, "growth": 1.18, "cap": 80},
 	"dps":     {"name": "Ярость труппы", "desc": "Урон героев: +50% за уровень.",                          "per": 0.50, "cost": 18.0, "growth": 1.18, "cap": 80},
 	"tap":     {"name": "Тяжёлый удар",  "desc": "Урон за тап: +60% за уровень.",                           "per": 0.60, "cost": 15.0, "growth": 1.18, "cap": 80},
-	"start":   {"name": "Щедрый старт",  "desc": "Начинаешь Новую Сказку с золотом.",                        "per": 0.0,  "cost": 25.0, "growth": 1.45, "cap": 15},
+	"start":   {"name": "Щедрый старт",  "desc": "Начинаешь Новую Сказку с серебром.",                       "per": 0.0,  "cost": 25.0, "growth": 1.45, "cap": 15},
 	"offline": {"name": "Долгий сон",    "desc": "Оффлайн: +2 ч копилки и +10% дохода за уровень.",          "per": 0.10, "cost": 40.0, "growth": 1.5,  "cap": 10},
 	"drum":    {"name": "Лютый Панк",    "desc": "Панк-рок: +2 с режима и быстрее заряд за уровень.",        "per": 0.0,  "cost": 35.0, "growth": 1.5,  "cap": 10},
 }
@@ -131,9 +132,14 @@ const CATCH_OFFER_SEC: float = 30.0            # сколько слот вис�
 const CATCH_FIRST_DELAY_SEC: float = 55.0      # пауза после тутора / старта сессии
 const CATCH_CD_MISS_SEC: float = 90.0          # КД, если окно прогорело
 const CATCH_CD_PLAY_SEC: float = 150.0         # КД после захода в ловца
-const CATCH_COIN_GOLD_FRAC: float = 0.4        # золото за монету = enemy_gold(stage) * это, без босс-мульти
+const CATCH_FIRST_BOMB_SEC: float = 23.0       # первый забег в жизни: бомба не раньше этой секунды
 const SALVO_HOY_KILLS: int = 12                # заряд ХОЙ в залпе
 const SALVO_HOY_DMG: int = 8                   # урон ХОЙ-столба (текущие враги мрут, жирный босс нет)
+const MINIGAME_PAY_IDLE_SEC: float = 120.0     # паритет: столько секунд idle-волны
+const MINIGAME_PAY_KILL_FLOOR: float = 40.0    # паритет: столько обычных мобов, если idle слабый
+const MINIGAME_SKILL_MAX: float = 1.8          # потолок skill = очки / PAR
+const CATCH_SCORE_PAR: float = 90.0            # паритетный улов ловца
+const SALVO_SCORE_PAR: float = 96.0            # паритет: ~24 сбития × 4 монеты
 
 # --- Сейв ------------------------------------------------------------------
 const SAVE_PATH: String = "user://save.json"

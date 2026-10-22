@@ -127,7 +127,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("apk", type=Path)
     parser.add_argument("--min-mb", type=float, default=60.0)
-    parser.add_argument("--max-mb", type=float, default=90.0)
+    parser.add_argument("--max-mb", type=float, default=95.0)
     args = parser.parse_args()
     return 1 if audit(args.apk.resolve(), args.min_mb, args.max_mb) else 0
 

@@ -427,13 +427,205 @@ const SHOTS: Array[Dictionary] = [
 		"buy_mult": 100,
 		"scroll": 160,
 	},
+	# --- Антракты: Золотой Дождь / Ведьмолет! --------------------------------
+	{
+		# 26 · Золотой Дождь · дождь монет
+		"file": "26_catch_rain.png",
+		"setup": {
+			"stage": 28, "tap": 10,
+			"allies": {"knight": 9, "ratrogue": 6, "bard": 3},
+			"gold": 3200.0, "daily_ready": false, "daily_claims": 1,
+			"enemy_hp_ratio": 0.6,
+		},
+		"enemy": "domovoi",
+		"action": "store_shot_minigame",
+		"minigame": "catch",
+		"pose": "rain",
+		"wait": 24,
+		"buy_mult": 10,
+		"scroll": 0,
+	},
+	{
+		# 27 · Золотой Дождь · бомба рядом
+		"file": "27_catch_bomb.png",
+		"setup": {
+			"stage": 62, "tap": 16,
+			"allies": {
+				"knight": 15, "ratrogue": 12, "bard": 8, "blacksmith": 5, "alchemist": 2,
+			},
+			"gold": 9100.0, "daily_ready": false, "daily_claims": 2,
+			"enemy_hp_ratio": 0.55,
+		},
+		"enemy": "emoghost",
+		"action": "store_shot_minigame",
+		"minigame": "catch",
+		"pose": "bomb",
+		"wait": 24,
+		"buy_mult": 10,
+		"scroll": 0,
+	},
+	{
+		# 28 · Золотой Дождь · захват в движении
+		"file": "28_catch_scoop.png",
+		"setup": {
+			"stage": 95, "tap": 20,
+			"allies": {
+				"knight": 19, "ratrogue": 15, "bard": 12, "blacksmith": 9, "alchemist": 6, "hunter": 3,
+			},
+			"gold": 16000.0, "daily_ready": false, "daily_claims": 3,
+			"enemy_hp_ratio": 0.5,
+		},
+		"enemy": "satyr_rocker",
+		"action": "store_shot_minigame",
+		"minigame": "catch",
+		"pose": "scoop",
+		"wait": 24,
+		"buy_mult": 100,
+		"scroll": 0,
+	},
+	{
+		# 29 · Золотой Дождь · НАЖИВА / победа
+		"file": "29_catch_win.png",
+		"setup": {
+			"stage": 118, "tap": 22,
+			"allies": {
+				"knight": 22, "ratrogue": 18, "bard": 14, "blacksmith": 11,
+				"alchemist": 8, "hunter": 5, "witch": 2,
+			},
+			"gold": 24000.0, "daily_ready": false, "daily_claims": 3,
+			"enemy_hp_ratio": 0.45,
+		},
+		"enemy": "wurdulak",
+		"action": "store_shot_minigame",
+		"minigame": "catch",
+		"pose": "win",
+		"wait": 24,
+		"buy_mult": 100,
+		"scroll": 0,
+	},
+	{
+		# 30 · Золотой Дождь · финал таймера
+		"file": "30_catch_late.png",
+		"setup": {
+			"stage": 155, "tap": 27,
+			"allies": {
+				"knight": 27, "ratrogue": 22, "bard": 18, "blacksmith": 14,
+				"alchemist": 11, "hunter": 8, "witch": 5, "jester": 2,
+			},
+			"gold": 42000.0, "daily_ready": false, "daily_claims": 4,
+			"enemy_hp_ratio": 0.52,
+		},
+		"enemy": "harpy_conductor",
+		"action": "store_shot_minigame",
+		"minigame": "catch",
+		"pose": "late",
+		"wait": 24,
+		"buy_mult": -1,
+		"scroll": 0,
+	},
+	{
+		# 31 · Ведьмолет! · бой волны
+		"file": "31_salvo_fight.png",
+		"setup": {
+			"stage": 40, "tap": 13,
+			"allies": {"knight": 12, "ratrogue": 9, "bard": 6, "blacksmith": 3},
+			"gold": 5500.0, "daily_ready": false, "daily_claims": 1,
+			"enemy_hp_ratio": 0.58,
+		},
+		"enemy": "garage_golem",
+		"action": "store_shot_minigame",
+		"minigame": "salvo",
+		"pose": "fight",
+		"wait": 28,
+		"buy_mult": 10,
+		"scroll": 0,
+	},
+	{
+		# 32 · Ведьмолет! · Жми на Ведьму!
+		"file": "32_salvo_hoy.png",
+		"setup": {
+			"stage": 78, "tap": 18,
+			"allies": {
+				"knight": 17, "ratrogue": 14, "bard": 10, "blacksmith": 7, "alchemist": 4,
+			},
+			"gold": 12000.0, "daily_ready": false, "daily_claims": 2,
+			"enemy_hp_ratio": 0.48,
+		},
+		"enemy": "shroom",
+		"action": "store_shot_minigame",
+		"minigame": "salvo",
+		"pose": "hoy_ready",
+		"wait": 28,
+		"buy_mult": 10,
+		"scroll": 0,
+	},
+	{
+		# 33 · Ведьмолет! · одно сердце
+		"file": "33_salvo_hurt.png",
+		"setup": {
+			"stage": 108, "tap": 21,
+			"allies": {
+				"knight": 20, "ratrogue": 16, "bard": 13, "blacksmith": 10,
+				"alchemist": 7, "hunter": 4,
+			},
+			"gold": 19000.0, "daily_ready": false, "daily_claims": 3,
+			"enemy_hp_ratio": 0.42,
+		},
+		"enemy": "polter_neighbor",
+		"action": "store_shot_minigame",
+		"minigame": "salvo",
+		"pose": "hurt",
+		"wait": 28,
+		"buy_mult": 100,
+		"scroll": 0,
+	},
+	{
+		# 34 · Ведьмолет! · густая волна
+		"file": "34_salvo_dense.png",
+		"setup": {
+			"stage": 142, "tap": 26,
+			"allies": {
+				"knight": 25, "ratrogue": 21, "bard": 17, "blacksmith": 13,
+				"alchemist": 10, "hunter": 7, "witch": 4,
+			},
+			"gold": 36000.0, "daily_ready": false, "daily_claims": 4,
+			"enemy_hp_ratio": 0.55,
+		},
+		"enemy": "medusa_makeup",
+		"action": "store_shot_minigame",
+		"minigame": "salvo",
+		"pose": "dense",
+		"wait": 28,
+		"buy_mult": 100,
+		"scroll": 0,
+	},
+	{
+		# 35 · Ведьмолет! · улёт / НАЖИВА
+		"file": "35_salvo_win.png",
+		"setup": {
+			"stage": 188, "tap": 31,
+			"allies": {
+				"knight": 31, "ratrogue": 26, "bard": 22, "blacksmith": 18,
+				"alchemist": 14, "hunter": 11, "witch": 8, "jester": 5, "berserker": 2,
+			},
+			"gold": 68000.0, "daily_ready": false, "daily_claims": 5,
+			"enemy_hp_ratio": 0.5,
+		},
+		"enemy": "dwarf",
+		"action": "store_shot_minigame",
+		"minigame": "salvo",
+		"pose": "win",
+		"wait": 28,
+		"buy_mult": -1,
+		"scroll": 0,
+	},
 ]
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var guard := Timer.new()
-	guard.wait_time = 240.0
+	guard.wait_time = 420.0
 	guard.one_shot = true
 	guard.timeout.connect(func(): printerr("STORE_SHOTS_TIMEOUT"); get_tree().quit(1))
 	add_child(guard)
@@ -500,6 +692,11 @@ func _capture(shot: Dictionary) -> void:
 		var act := String(shot.action)
 		if act == "store_shot_offline":
 			_main.store_shot_offline(12500.0)
+		elif act == "store_shot_minigame":
+			await _main.store_shot_minigame(
+				String(shot.get("minigame", "catch")),
+				String(shot.get("pose", "rain"))
+			)
 		else:
 			_main.call(act)
 		await _wait_frames(int(shot.get("wait", FRAME_WAIT)))

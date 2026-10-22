@@ -20,11 +20,11 @@
 - Уники / новые / сессии: жизнь, 7д, 7д до (WoW)
 - Длина сессии, краши
 - Воронка уники: `tutorial_done`, `daily_claim`, `ad_watched`, `prestige`, `ad_failed`
-- Rewarded по placement (просмотры `ad_watched`): Клад / ×2 вход / ×2 урон / +15с
+- Rewarded по placement (просмотры `ad_watched`): Клад / ×2 вход / ×2 урон / +15с / **ловец ретрай** (`catch_retry`) / **залп ретрай** (`salvo_retry`)
 - DAU/new/ret по дням за 7д
 - Стор-установки vs first open — если есть CSV
 
-Не тянуть: Logs API, города, модели, полный список событий.
+Не тянуть: Logs API, города, модели, полный список событий. События антракта (`minigame_*`) — в [MINIGAMES.md](MINIGAMES.md); в срез не класть, пока 1.0.7 не в сторе.
 
 ## Что докидываешь ты (inbox)
 

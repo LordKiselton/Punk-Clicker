@@ -10,6 +10,7 @@ const SURF_BORDER := Color("#3a2b44")
 const ARENA := Color("#221829")
 const BLOOD := Color("#b5121b")
 const GOLD := Color("#e0c341")
+const SILVER := Color("#c8d6e4")          # кошелёк кликера; GOLD остаётся акцентом UI
 const GREEN := Color("#6f9f5a")
 const TXT := Color("#e8e0ee")
 const MUTED := Color("#9a8fa6")
@@ -22,6 +23,7 @@ const PORTRAIT_BG := Color("#1d1525")
 const F_TITLE := 34
 const F_NUM := 32
 const F_RES := 30        # единый размер верхних ресурсов
+const RES_NUM_W := 148.0 # запас под «999.99az» — плашка кошелька не растёт с числом
 const F_BOSS := 42       # крупный текст босса
 const PORTRAIT_H := 150  # портрет в рельсе Труппы (и модалка)
 const CARD_W := 166.0    # ширина карточки = кнопка xN
@@ -41,6 +43,7 @@ const UI_TEX_BTN_SEC := "res://art/ui/btn_secondary.png"
 const UI_TEX_CLOSE := "res://art/ui/btn_close.png"             # Icons-10 red ✕
 const UI_TEX_CHECK := "res://art/ui/btn_check.png"             # Icons-9 green ✓
 const UI_TEX_GEAR := "res://art/ui/btn_gear.png"               # Icons_settins_frame (purple bake)
+const SILVER_COIN_PATH := "res://art/ui/silver.png"            # кошелёк кликера; антракт — gold.png
 const UI_PURPLE := Color("#9b64d4")       # обводка модалок / «сегодня»
 const UI_BTN_SLICE := 44
 const UI_CLOSE_SIZE := 48.0
@@ -120,9 +123,9 @@ const LOCATION_ENEMIES := [
 	["werewolf", "faerie", "shroom", "zombie", "satyr_rocker"],                          # Лес
 	["domovoi", "polter_neighbor", "garage_golem", "upyr_collector", "emoghost", "imp_petard"], # Подъезд
 	["zombie", "skeleton", "emoghost", "werewolf", "polter_neighbor"],                   # Погост
-	["kobold_pickpocket", "imp_petard", "centaur_courier", "orkgang", "shroom"],         # Двор
+	["kobold_pickpocket", "imp_petard", "centaur_courier", "orkgang", "shroom", "goblin_zoomer"], # Двор
 	["orkgang", "orkskinhead", "troll", "satyr_rocker", "gnoll_baryga"],                 # Трактир
-	["succubus_cashier", "wurdulak", "elf_chelnok", "gnoll_baryga", "kobold_pickpocket", "centaur_courier"], # 24/7
+	["succubus_cashier", "wurdulak", "elf_chelnok", "gnoll_baryga", "kobold_pickpocket", "centaur_courier", "goblin_zoomer"], # 24/7
 	["ratgangster", "orkrapper", "harpy_conductor", "basilisk_gai", "banshee", "elf_chelnok"], # Город
 	["banshee", "elf_raver", "chort_scooter", "techno", "medusa_makeup"],                # Неткафе
 	["chort_croupier", "medusa_makeup", "satyr_rocker", "elf_raver", "banshee"],         # Фанера
@@ -145,12 +148,15 @@ const ENEMY_NAMES := {
 	"satyr_rocker": "Сатир-Рокер", "succubus_cashier": "Суккуб-Кассирша",
 	"upyr_collector": "Упырь-Коллектор", "basilisk_gai": "Василиск в форме",
 	"polter_neighbor": "Полтергейст-Сосед", "chort_scooter": "Черт на самокате",
+	# волна 4
+	"goblin_zoomer": "Зумер с ПВЗ",
 }
 const ENEMY_EXTRA_IDS := [
 	"centaur_courier", "domovoi", "garage_golem", "imp_petard", "wurdulak",
 	"gnoll_baryga", "elf_raver", "kobold_pickpocket", "chort_croupier", "medusa_makeup",
 	"elf_chelnok", "harpy_conductor", "satyr_rocker", "succubus_cashier",
 	"upyr_collector", "basilisk_gai", "polter_neighbor", "chort_scooter",
+	"goblin_zoomer",
 ]
 const ENEMY_TEX_DIR := "res://art/enemies/"
 const ALLY_TEX_PATHS := {
@@ -237,6 +243,7 @@ var _enemy_parallax: Vector2 = Vector2.ZERO    # смещение паралла
 # --- Настройки ---------------------------------------------------------------
 const SETTINGS_PATH := "user://settings.cfg"
 var _music_on: bool = true
+var _sfx_on: bool = true
 var _reduce_fx: bool = false
 var _notify_on: bool = true
 var _gear_btn: Button = null
@@ -378,16 +385,26 @@ var _side_afisha: Dictionary = {}       # root/title/btn/icon/ph/foot/shown
 var _side_review: Dictionary = {}     # «Хвала» под афишей — пока не ушли в стор
 var _side_klad: Dictionary = {}
 var _side_catch: Dictionary = {}
-var _side_salvo_dbg: Dictionary = {}
 var _catch_offering: bool = false
 var _catch_t: float = -1.0              # <0 не взведён; иначе секунды фазы (ожидание / окно)
 var _catch_retry_used: bool = false     # один ролик-ретрай на окно слота
 var _catch_run_retry: bool = false      # текущий забег начат с ролика
-var _interlude_kind: String = "salvo"   # очередь: залп ↔ ловец (прототип стартует с залпа)
+var _interlude_kind: String = "catch"   # очередь: ловец → залп → ловец
 var _interlude_playing: String = "catch"
 var _interlude_sandbox: bool = false    # редактор: бесконечный залп, без очереди/золота
+var _catch_intro_done: bool = false     # тутор ловца один раз за жизнь
+var _catch_first_run_done: bool = false # первый забег (бомба с 23 с) завершён
 var _catch_offer: Control = null
 var _catch_offer_box: Control = null
+var _payout_gold: float = 0.0
+var _payout_caught: int = 0
+var _payout_result: Dictionary = {}
+var _payout_taking: bool = false
+var _payout_gold_lab: Label = null
+var _payout_rate_lab: Label = null
+var _payout_take_btn: Button = null
+var _payout_gold_icon: TextureRect = null
+var _payout_tw: Tween = null
 var _side_x2: Dictionary = {}
 var _x2_reveal_armed: bool = false
 var _side_alert_ping_t: float = 0.0
@@ -414,9 +431,10 @@ var _tut_bubble_pos: Vector2 = Vector2.ZERO
 var _tut_bubble_size: Vector2 = Vector2.ZERO
 
 # --- Иконки ресурсов ---------------------------------------------------------
-var _gold_tex: Texture2D = null
+var _gold_tex: Texture2D = null        # золото антракта (дождь / НАЖИВА слева)
+var _silver_tex: Texture2D = null      # серебро кликера (топбар, ценники, лут)
 var _skull_tex: Texture2D = null       # «черепа» — валюта престижа (внутри зовётся bells)
-var _gold_icon: TextureRect = null     # иконка золота в топбаре (пульсирует при полёте монет)
+var _gold_icon: TextureRect = null     # иконка серебра в топбаре (пульсирует при полёте монет)
 var _skull_icon_top: TextureRect = null
 var _sword_tex: Texture2D = null       # картинка меча для карточки «Клинок»
 var _displayed_bells: float = 0.0      # прокручиваемый счётчик черепов в окне престижа
@@ -490,6 +508,8 @@ var _listen_tw: Tween = null
 
 # --- Музыка (всегда играет, в раже плавно громче + лёгкий овердрайв) ---------
 const MUSIC_PATH := "res://audio/punk_clicker_music.mp3"
+const MUSIC_CATCH_PATH := MUSIC_PATH   # позже: уникальный OST ловца
+const MUSIC_SALVO_PATH := MUSIC_PATH   # позже: уникальный OST залпа
 const MUSIC_BASE_DB := -12.0          # фоновая громкость
 const MUSIC_LOUD_DB := -3.0           # громкость в панк-раже
 const MUSIC_MODAL_DUCK_DB := -2.0     # ~20% тише, пока открыта модалка
@@ -497,9 +517,10 @@ const MUSIC_SILENCE_DB := -80.0
 var _music_player: AudioStreamPlayer = null
 var _music_modal_depth: int = 0
 var _music_break_pending_restart: bool = false
-var _music_isolate: bool = false      # антракт: без ража; позже сюда уникальный OST
+var _music_isolate: bool = false      # антракт: без ража; свой OST позже
 var _music_fade_tw: Tween = null
 var _music_dist: AudioEffectDistortion = null
+var _music_stream_path: String = MUSIC_PATH
 
 
 func _ready() -> void:
@@ -864,11 +885,26 @@ func _style_button_texture(b: Button, preferred: bool) -> void:
 	b.add_theme_color_override("font_hover_color", GOLD if preferred else TXT)
 	b.add_theme_color_override("font_disabled_color", Color(MUTED, 0.5))
 
+# Ресурсы вправо, шестерёнка влево — монеты летят в тот же угол, что и в антрактах.
+func _park_wallet_right() -> void:
+	var left := get_node_or_null("%LeftCol") as VBoxContainer
+	var right := get_node_or_null("%RightCol") as VBoxContainer
+	if left == null or right == null:
+		return
+	var moving: Array = left.get_children()
+	for c in moving:
+		left.remove_child(c)
+		right.add_child(c)
+		if c is Label:
+			(c as Label).horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+
+
 func _lab(l: Label, fs: int, color: Color) -> void:
 	l.add_theme_font_size_override("font_size", fs)
 	l.add_theme_color_override("font_color", color)
 
-# Иконка ресурса слева от числа: оборачиваем лейбл в HBox [иконка][число]
+# Число слева, иконка справа — иконка у края, куда летят монеты.
+# Ширина числа фиксирована: плашка не раздвигается при росте счётчика.
 func _decorate_res_label(lbl: Label, tex: Texture2D) -> TextureRect:
 	var parent := lbl.get_parent()
 	if parent == null:
@@ -876,6 +912,11 @@ func _decorate_res_label(lbl: Label, tex: Texture2D) -> TextureRect:
 	var idx := lbl.get_index()
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 5)
+	hb.size_flags_horizontal = Control.SIZE_SHRINK_END
+	hb.alignment = BoxContainer.ALIGNMENT_END
+	lbl.custom_minimum_size = Vector2(RES_NUM_W, 0.0)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	lbl.size_flags_horizontal = Control.SIZE_SHRINK_END
 	var ic := TextureRect.new()
 	ic.texture = tex
 	ic.custom_minimum_size = Vector2(30, 30)
@@ -884,8 +925,8 @@ func _decorate_res_label(lbl: Label, tex: Texture2D) -> TextureRect:
 	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.remove_child(lbl)
-	hb.add_child(ic)
 	hb.add_child(lbl)
+	hb.add_child(ic)
 	parent.add_child(hb)
 	parent.move_child(hb, idx)
 	return ic
@@ -901,23 +942,34 @@ func _skull_icon(px: int = 24) -> TextureRect:
 	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return ic
 
+func _wallet_tex() -> Texture2D:
+	return _silver_tex if _silver_tex else _gold_tex
+
+
 func _bar_style(p: ProgressBar) -> void:
 	p.add_theme_stylebox_override("background", _flat(DARK, SURF_BORDER, 999, 2, 0))
 	p.add_theme_stylebox_override("fill", _flat(BLOOD, BLOOD, 999, 0, 0))
 
 func _apply_styles() -> void:
+	_park_wallet_right()
 	_gold_tex = load("res://art/ui/gold.png") if ResourceLoader.exists("res://art/ui/gold.png") else null
+	_silver_tex = load(SILVER_COIN_PATH) if ResourceLoader.exists(SILVER_COIN_PATH) else _gold_tex
 	_skull_tex = load("res://art/ui/skull.png") if ResourceLoader.exists("res://art/ui/skull.png") else null
 	_sword_tex = load("res://art/ui/sword.png") if ResourceLoader.exists("res://art/ui/sword.png") else null
-	_lab(_gold_label, F_RES, GOLD)
+	_lab(_gold_label, F_RES, SILVER)
 	if is_instance_valid(_rate_label): _lab(_rate_label, F_SMALL, MUTED)
 	_lab(_bells_label, F_RES, Color("#c9a0dc"))
-	if _gold_tex: _gold_icon = _decorate_res_label(_gold_label, _gold_tex)
+	if _wallet_tex(): _gold_icon = _decorate_res_label(_gold_label, _wallet_tex())
 	if _skull_tex: _skull_icon_top = _decorate_res_label(_bells_label, _skull_tex)
 	_sync_bells_topbar()
 	_lab(_skulls_label, F_RES, Color("#cdbfd6"))
 	_lab(_title_label, F_TITLE, GOLD)
 	_lab(_boss_label, F_BOSS, BLOOD)
+	# лёгкая обводка как у «Золотой Дождь» / «Ведьмолет!» в антрактах
+	for n: Label in [_title_label, _boss_label]:
+		if is_instance_valid(n):
+			n.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+			n.add_theme_constant_override("outline_size", 8)
 	if is_instance_valid(_stage_label): _stage_label.visible = false   # урон/DPS убрали
 	if is_instance_valid(_boss_bar): _boss_bar.visible = false          # полосу босса убрали
 	_arena.add_theme_stylebox_override("panel", _empty())   # фон-задник просвечивает; клип оставляем
@@ -927,6 +979,34 @@ func _apply_styles() -> void:
 	_reward_btn.text = "▶ Клад"
 	_btn_hud(_reward_btn, "primary")
 	_reward_btn.button_down.connect(_punch.bind(_reward_btn))
+	_plate_wallet()
+
+
+func _plate_wallet() -> void:
+	var right := get_node_or_null("%RightCol") as VBoxContainer
+	if right == null or right.get_parent() is PanelContainer:
+		return
+	var plate := PanelContainer.new()
+	plate.name = "ResPlate"
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	plate.size_flags_horizontal = Control.SIZE_SHRINK_END
+	plate.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	# 148 число + 5 gap + 30 иконка + 18 margins — сразу под обе строки
+	plate.custom_minimum_size = Vector2(RES_NUM_W + 5.0 + 30.0 + 18.0, 0.0)
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.05, 0.02, 0.03, 0.78)
+	box.set_corner_radius_all(10)
+	box.content_margin_left = 10.0
+	box.content_margin_right = 8.0
+	box.content_margin_top = 4.0
+	box.content_margin_bottom = 4.0
+	plate.add_theme_stylebox_override("panel", box)
+	var parent := right.get_parent()
+	var idx := right.get_index()
+	parent.remove_child(right)
+	plate.add_child(right)
+	parent.add_child(plate)
+	parent.move_child(plate, idx)
 
 
 func _apply_fonts() -> void:
@@ -1013,7 +1093,7 @@ func _load_textures() -> void:
 func _loc_index() -> int:
 	if _loc_preview >= 0 and not Game.store_shot_mode:
 		return _loc_preview % LOC_BG_PATHS.size()
-	return (Game.location() - 1) % LOC_BG_PATHS.size()
+	return Game.visual_location() % LOC_BG_PATHS.size()
 
 
 # Выбор врага: пул локации, мягкий стаггер, без повтора подряд, босс = ключевой
@@ -1161,18 +1241,18 @@ func _row_cost_btn() -> Button:
 	row.offset_left = 8
 	row.offset_right = -8
 	var price_l := Label.new()
-	_lab(price_l, F_SMALL, GOLD)
+	_lab(price_l, F_SMALL, SILVER)
 	price_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var ic := TextureRect.new()
-	ic.texture = _gold_tex
+	ic.texture = _wallet_tex()
 	ic.custom_minimum_size = Vector2(22, 22)
 	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ic.visible = _gold_tex != null
+	ic.visible = _wallet_tex() != null
 	var qty_l := Label.new()
-	_lab(qty_l, F_SMALL, GOLD)
+	_lab(qty_l, F_SMALL, SILVER)
 	qty_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(price_l)
 	row.add_child(ic)
@@ -1204,7 +1284,8 @@ func _set_buy_face(btn: Button, price: float, n: int, note: String = "") -> void
 		return
 	qty_l.visible = true
 	if is_instance_valid(ic):
-		ic.visible = _gold_tex != null
+		ic.texture = _wallet_tex()
+		ic.visible = _wallet_tex() != null
 	var nn: int = maxi(1, n)
 	var old_n: int = int(btn.get_meta("qty_n")) if btn.has_meta("qty_n") else nn
 	qty_l.text = "×%d" % nn
@@ -1404,7 +1485,7 @@ func _make_klinok_card() -> Control:
 		if Game.buy_tap_n(n):
 			UiSfx.play("ui_upgrade")
 			_on_buy_spent(cost, n)
-			_fly_coins(_global_center(_gold_label), _global_center(cost), 9, GOLD, null, null, 0, false)
+			_fly_coins(_wallet_center(), _global_center(cost), 9, SILVER, _wallet_tex(), null, 0, false)
 			_frame_pop(_klinok_w.get("frame")))
 	vb.add_child(pf)
 	vb.add_child(name_l)
@@ -1443,7 +1524,7 @@ func _make_card(aid: String) -> Control:
 		if Game.buy_ally_n(aid, n):
 			UiSfx.play("ui_upgrade")
 			_on_buy_spent(cost, n)
-			_fly_coins(_global_center(_gold_label), _global_center(cost), 9, GOLD, null, null, 0, false)
+			_fly_coins(_wallet_center(), _global_center(cost), 9, SILVER, _wallet_tex(), null, 0, false)
 			_card_pop(aid))
 	vb.add_child(pf)
 	vb.add_child(name_l)
@@ -1768,14 +1849,36 @@ func _on_reward_pressed() -> void:
 	_side_sync_attention()
 	Monetization.show_rewarded("double_gold")
 
-func _on_salvo_debug_pressed() -> void:
-	if not OS.has_feature("editor"):
+func _dev_launch_minigame(kind: String, sandbox: bool) -> void:
+	if Game.store_shot_mode or not OS.is_debug_build():
 		return
 	if Game.minigame_lock or _catch_fading:
 		return
-	_interlude_sandbox = true
-	_interlude_kind = "salvo"
+	if is_instance_valid(_loc_dev_root):
+		_loc_dev_root.visible = false
+	_interlude_sandbox = sandbox
+	_interlude_kind = kind
 	_start_catch_minigame()
+
+
+func _dev_return_clicker() -> void:
+	if Game.store_shot_mode or not OS.is_debug_build():
+		return
+	if is_instance_valid(_loc_dev_root):
+		_loc_dev_root.visible = false
+	if not Game.minigame_lock and not is_instance_valid(_catch_game):
+		return
+	if _catch_fading:
+		return
+	_close_catch_offer(false)
+	if is_instance_valid(_catch_game):
+		if _catch_game.finished.is_connected(_on_catch_finished):
+			_catch_game.finished.disconnect(_on_catch_finished)
+		if _catch_game.has_signal("intro_step") and _catch_game.intro_step.is_connected(_on_catch_intro_step):
+			_catch_game.intro_step.disconnect(_on_catch_intro_step)
+		if _catch_game.has_signal("intro_done") and _catch_game.intro_done.is_connected(_on_catch_intro_done):
+			_catch_game.intro_done.disconnect(_on_catch_intro_done)
+	_catch_give_up_pressed()
 
 
 func _on_catch_pressed() -> void:
@@ -1798,7 +1901,9 @@ func _sync_interlude_slot_look() -> void:
 	var salvo: bool = _interlude_kind == "salvo"
 	var title: Label = _side_catch.get("title") as Label
 	if is_instance_valid(title):
-		title.text = "ЗАЛП!" if salvo else "ЗОЛОТО!"
+		title.text = "Ведьмолет!" if salvo else "Золотой Дождь"
+		title.autowrap_mode = TextServer.AUTOWRAP_WORD
+		title.add_theme_font_size_override("font_size", 16)
 	var icon: TextureRect = _side_catch.get("icon") as TextureRect
 	if is_instance_valid(icon):
 		var path: String = "res://art/troupe/v3/witch.png" if salvo else "res://art/troupe/v3/jester.png"
@@ -1851,8 +1956,14 @@ func _start_catch_minigame() -> void:
 			"duration": Balance.CATCH_DURATION_SEC,
 			"bg_path": _catch_random_bg(),
 			"infinite": _interlude_sandbox,
+			"intro": (not _interlude_sandbox) and _interlude_playing == "catch" and not _catch_intro_done,
+			"first_run": (not _interlude_sandbox) and _interlude_playing == "catch" and not _catch_first_run_done,
 		})
 		_catch_game.finished.connect(_on_catch_finished)
+		if _catch_game.has_signal("intro_step"):
+			_catch_game.intro_step.connect(_on_catch_intro_step)
+		if _catch_game.has_signal("intro_done"):
+			_catch_game.intro_done.connect(_on_catch_intro_done)
 	)
 	if not is_instance_valid(_catch_game):
 		_catch_fading = false
@@ -1871,6 +1982,7 @@ func _start_catch_minigame() -> void:
 		"kind": _interlude_playing,
 		"stage": Game.stage,
 		"retry": 1 if _catch_run_retry else 0,
+		"first_run": 1 if (not _catch_first_run_done and _interlude_playing == "catch") else 0,
 	})
 	_side_sync_attention()
 
@@ -1886,14 +1998,21 @@ func _on_catch_finished(result: Dictionary) -> void:
 		return
 	var fail: bool = bool(result.get("fail", false))
 	var caught: int = int(result.get("caught", 0))
-	var gold: float = Game.catch_payout(caught, fail)
-	_report_catch_end(result, fail, gold)
+	var gold: float = Game.minigame_payout(_interlude_playing, caught, fail)
 	if fail and not _catch_retry_used:
+		_report_catch_end(result, true, 0.0)
 		if not is_instance_valid(_catch_layer):
 			await _catch_leave_world(0.0, caught, true)
 			return
 		_show_catch_retry_offer()
 		return
+	if not fail and gold > 0.0:
+		_payout_gold = gold
+		_payout_caught = caught
+		_payout_result = result
+		_show_minigame_payout()
+		return
+	_report_catch_end(result, fail, gold)
 	await _catch_leave_world(gold, caught, fail)
 
 
@@ -1909,6 +2028,7 @@ func _report_catch_end(result: Dictionary, fail: bool, gold: float) -> void:
 		"coins_missed": int(result.get("coins_missed", 0)),
 		"hazards_missed": int(result.get("hazards_missed", 0)),
 		"gold": String.num_scientific(gold),
+		"first_run": 1 if (not _catch_first_run_done and _interlude_playing == "catch") else 0,
 	})
 
 
@@ -1931,25 +2051,168 @@ func _catch_leave_world(gold: float, caught: int, fail: bool) -> void:
 	)
 	_catch_fading = false
 	if gold > 0.0:
-		_fly_coins(_global_center(_arena) if is_instance_valid(_arena) else Vector2(360, 640), _global_center(_gold_label), mini(18, maxi(6, caught / 2)), GOLD, _gold_tex, _gold_icon)
-	if fail:
-		if _interlude_playing == "salvo":
-			_toast("Подбили! Залп сгорел")
-		else:
-			_toast("Бомба! Монеты сгорели")
-	else:
-		if _interlude_playing == "salvo":
-			_toast("Сбили %d · +%s" % [caught, fmt(gold)])
-		else:
-			_toast("Собрали %d · +%s" % [caught, fmt(gold)])
+		_fly_coins(_global_center(_arena) if is_instance_valid(_arena) else Vector2(360, 640), _wallet_center(), mini(18, maxi(6, caught / 2)), SILVER, _wallet_tex(), _gold_icon)
 	_catch_offering = false
 	_catch_t = Balance.CATCH_CD_PLAY_SEC
 	_catch_retry_used = false
 	_catch_run_retry = false
+	if not _interlude_sandbox and _interlude_playing == "catch" and not _catch_first_run_done:
+		_catch_first_run_done = true
+		_save_settings()
 	if not _interlude_sandbox:
 		_advance_interlude_queue()
 	_interlude_sandbox = false
 	_side_sync_attention()
+
+
+func _show_minigame_payout() -> void:
+	if not is_instance_valid(_catch_layer):
+		_report_catch_end(_payout_result, false, _payout_gold)
+		await _catch_leave_world(_payout_gold, _payout_caught, false)
+		return
+	_payout_taking = false
+	_close_catch_offer(false)
+	_catch_offer = Control.new()
+	_catch_offer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_catch_offer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_catch_offer.z_index = 50
+	_catch_layer.add_child(_catch_offer)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.65)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_catch_offer.add_child(dim)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_catch_offer.add_child(cc)
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", _flat(DARK, GOLD, 20, 2, UI_MODAL_PAD))
+	box.custom_minimum_size = Vector2(UI_DAILY_MODAL_W, 0)
+	cc.add_child(box)
+	_catch_offer_box = box
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 16)
+	box.add_child(vb)
+	var t := Label.new()
+	t.text = "НАЖИВА!"
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(t, F_BOSS, GOLD)
+	if _header_font:
+		t.add_theme_font_override("font", _header_font)
+	vb.add_child(t)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_child(row)
+	var left_tex: Texture2D = _gold_tex
+	row.add_child(_payout_col("Золото", left_tex, fmt(float(_payout_caught)), false))
+	var arrow := Label.new()
+	arrow.text = "→"
+	arrow.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	arrow.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_lab(arrow, F_BOSS, GOLD)
+	if _header_font:
+		arrow.add_theme_font_override("font", _header_font)
+	row.add_child(arrow)
+	row.add_child(_payout_col("Серебро", _wallet_tex(), "0", true))
+	_payout_rate_lab = Label.new()
+	_payout_rate_lab.text = "Пересчитаем по курсу..."
+	_payout_rate_lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_payout_rate_lab.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(_payout_rate_lab, F_SUB, MUTED)
+	vb.add_child(_payout_rate_lab)
+	_payout_take_btn = _settings_button("Забрать", WOOD, true)
+	_payout_take_btn.disabled = true
+	_payout_take_btn.pressed.connect(_minigame_payout_take)
+	vb.add_child(_payout_take_btn)
+	_pop_open(_catch_offer, box)
+	_start_payout_roll()
+
+
+func _payout_col(caption: String, tex: Texture2D, value: String, gold_side: bool) -> VBoxContainer:
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", 6)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	var cap := Label.new()
+	cap.text = caption
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(cap, F_SUB, MUTED)
+	col.add_child(cap)
+	var ic := TextureRect.new()
+	ic.custom_minimum_size = Vector2(72, 72)
+	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ic.pivot_offset = Vector2(36, 36)
+	if tex:
+		ic.texture = tex
+	col.add_child(ic)
+	var n := Label.new()
+	n.text = value
+	n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(n, F_BOSS if gold_side else F_TITLE, SILVER if gold_side else GOLD)
+	if _header_font:
+		n.add_theme_font_override("font", _header_font)
+	col.add_child(n)
+	if gold_side:
+		_payout_gold_lab = n
+		_payout_gold_icon = ic
+	return col
+
+
+func _kill_payout_tw() -> void:
+	if _payout_tw != null and _payout_tw.is_valid():
+		_payout_tw.kill()
+	_payout_tw = null
+
+
+func _start_payout_roll() -> void:
+	_kill_payout_tw()
+	if not is_instance_valid(_payout_gold_lab):
+		_finish_payout_roll()
+		return
+	_payout_gold_lab.text = "0"
+	if is_instance_valid(_payout_gold_icon):
+		_payout_gold_icon.scale = Vector2.ONE
+	_payout_tw = _catch_offer.create_tween() if is_instance_valid(_catch_offer) else create_tween()
+	_payout_tw.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	_payout_tw.tween_method(_tick_payout_roll, 0.0, 1.0, 0.65).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_payout_tw.finished.connect(_finish_payout_roll)
+
+
+func _tick_payout_roll(k: float) -> void:
+	if is_instance_valid(_payout_gold_lab):
+		_payout_gold_lab.text = fmt(_payout_gold * k)
+	if is_instance_valid(_payout_gold_icon):
+		var p: float = sin(k * PI)
+		_payout_gold_icon.scale = Vector2.ONE * (1.0 + 0.16 * p)
+
+
+func _finish_payout_roll() -> void:
+	_kill_payout_tw()
+	if is_instance_valid(_payout_gold_lab):
+		_payout_gold_lab.text = fmt(_payout_gold)
+	if is_instance_valid(_payout_gold_icon):
+		_payout_gold_icon.scale = Vector2.ONE
+	if is_instance_valid(_payout_rate_lab) and _payout_caught > 0:
+		_payout_rate_lab.text = "Пересчитаем по курсу... %s / шт" % _fmt_payout_rate(_payout_gold / float(_payout_caught))
+	if is_instance_valid(_payout_take_btn):
+		_payout_take_btn.disabled = false
+
+
+func _minigame_payout_take() -> void:
+	if _payout_taking:
+		return
+	_payout_taking = true
+	_kill_payout_tw()
+	var gold: float = _payout_gold
+	var caught: int = _payout_caught
+	var result: Dictionary = _payout_result
+	_close_catch_offer(false)
+	_report_catch_end(result, false, gold)
+	UiSfx.play("ui_reward_claim")
+	await _catch_leave_world(gold, caught, false)
 
 
 func _show_catch_retry_offer() -> void:
@@ -1985,7 +2248,7 @@ func _show_catch_retry_offer() -> void:
 		t.add_theme_font_override("font", _header_font)
 	vb.add_child(t)
 	var s := Label.new()
-	s.text = "Ряд у метлы. Ещё один залп?" if _interlude_playing == "salvo" else "Мешок сгорел. Ещё один дождь?"
+	s.text = "Черти подбили ведьму! Еще ведьмолет?" if _interlude_playing == "salvo" else "Мешок порвался! Еще дождя?"
 	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	s.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_lab(s, F_BODY, TXT)
@@ -2000,10 +2263,15 @@ func _show_catch_retry_offer() -> void:
 
 
 func _close_catch_offer(play_close_sfx: bool = true) -> void:
+	_kill_payout_tw()
 	if is_instance_valid(_catch_offer):
 		_pop_close_free(_catch_offer, _catch_offer_box, play_close_sfx)
 	_catch_offer = null
 	_catch_offer_box = null
+	_payout_gold_lab = null
+	_payout_rate_lab = null
+	_payout_take_btn = null
+	_payout_gold_icon = null
 
 
 func _catch_watch_ad() -> void:
@@ -2014,6 +2282,18 @@ func _catch_watch_ad() -> void:
 func _catch_give_up_pressed() -> void:
 	_close_catch_offer(false)
 	await _catch_leave_world(0.0, 0, true)
+
+
+func _on_catch_intro_step(step: int) -> void:
+	Analytics.report("minigame_tutorial_step", {"kind": "catch", "step": int(step)})
+
+
+func _on_catch_intro_done() -> void:
+	if _catch_intro_done:
+		return
+	_catch_intro_done = true
+	_save_settings()
+	Analytics.report("minigame_tutorial_done", {"kind": "catch"})
 
 
 func _catch_remount() -> bool:
@@ -2027,7 +2307,7 @@ func _catch_remount() -> bool:
 		_catch_game = null
 		if old.get_parent() != null:
 			old.get_parent().remove_child(old)
-		old.free()
+		old.queue_free()
 	if not is_instance_valid(_catch_layer):
 		_catch_layer = CanvasLayer.new()
 		_catch_layer.layer = 72
@@ -2044,6 +2324,8 @@ func _catch_remount() -> bool:
 		"duration": Balance.CATCH_DURATION_SEC,
 		"bg_path": _catch_random_bg(),
 		"infinite": _interlude_sandbox,
+		"intro": false,
+		"first_run": false,
 	})
 	_catch_game.finished.connect(_on_catch_finished)
 	return true
@@ -2160,7 +2442,7 @@ func _catch_random_bg() -> String:
 	var n: int = LOC_BG_PATHS.size()
 	if n <= 0:
 		return BG_TEX_PATH
-	var cur: int = (Game.location() - 1) % n
+	var cur: int = _loc_index() % n
 	var idx: int = randi() % n
 	if n > 1 and idx == cur:
 		idx = (idx + 1) % n
@@ -2240,7 +2522,7 @@ func _on_rewarded(placement: String) -> void:
 		_side_sync_attention()
 		Economy.add_gold(Game.rewarded_gold_bonus())
 		UiSfx.play("ui_reward_claim")
-		_fly_coins(_side_klad_center(), _global_center(_gold_label), 16, GOLD, _gold_tex, _gold_icon)
+		_fly_coins(_side_klad_center(), _wallet_center(), 16, SILVER, _wallet_tex(), _gold_icon)
 	elif placement == "boss_time":
 		get_tree().paused = false
 		Game.boss_grant_time(15.0)   # +15 секунд, бой продолжается
@@ -2568,12 +2850,10 @@ func _setup_music() -> void:
 	_music_dist.pre_gain = 0.0
 	_music_dist.post_gain = 0.0
 	AudioServer.add_bus_effect(idx, _music_dist)
-	var stream: Resource = load(MUSIC_PATH)
-	if stream is AudioStreamMP3:
-		stream.loop = true   # бесшовный луп фоновой музыки
+	_music_stream_path = MUSIC_PATH
 	_music_player = AudioStreamPlayer.new()
 	_music_player.process_mode = Node.PROCESS_MODE_ALWAYS   # не рвётся при паузе модалок
-	_music_player.stream = stream
+	_music_player.stream = _music_load_stream(MUSIC_PATH)
 	_music_player.bus = "Music"
 	add_child(_music_player)
 	_music_player.play()
@@ -2616,13 +2896,36 @@ func _music_fade_player(to_db: float, sec: float) -> void:
 	_music_fade_tw.tween_property(_music_player, "volume_db", to_db, sec)
 
 
+func _music_path_for_context() -> String:
+	if not _music_isolate:
+		return MUSIC_PATH
+	# ловец и залп: одни правила (рестарт на фейде, без ража). Уникальные треки — позже.
+	if _interlude_playing == "salvo":
+		return MUSIC_SALVO_PATH
+	return MUSIC_CATCH_PATH
+
+
+func _music_load_stream(path: String) -> AudioStream:
+	var stream: Resource = load(path)
+	if stream is AudioStreamMP3:
+		(stream as AudioStreamMP3).loop = true
+	elif stream is AudioStreamOggVorbis:
+		(stream as AudioStreamOggVorbis).loop = true
+	return stream as AudioStream
+
+
 func _music_restart_play() -> void:
 	_music_kill_fade()
 	if not is_instance_valid(_music_player):
 		return
 	_music_player.stop()
 	_music_player.volume_db = 0.0
-	# позже: if _music_isolate: stream = catch OST
+	var path: String = _music_path_for_context()
+	if path != _music_stream_path or _music_player.stream == null:
+		var stream: AudioStream = _music_load_stream(path)
+		if stream != null:
+			_music_player.stream = stream
+			_music_stream_path = path
 	if _music_on:
 		_music_player.play()
 	_apply_music_bus_volume()
@@ -3453,8 +3756,8 @@ func _on_boss_won() -> void:
 		Analytics.report("first_boss_win", {"stage": Game.stage})
 	_fail_count = 0            # босс повержен — счётчик провалов сброшен
 	_last_fail_stage = -1
-	var loc: String = LOCATIONS[(Game.location() - 1) % LOCATIONS.size()]
-	_fly_coins(_global_center(_enemy), _global_center(_gold_label), 20, GOLD, _gold_tex, _gold_icon)
+	var loc: String = LOCATIONS[_loc_index() % LOCATIONS.size()]
+	_fly_coins(_global_center(_enemy), _wallet_center(), 20, SILVER, _wallet_tex(), _gold_icon)
 	_boss_beat("БОСС ПОВЕРЖЕН!", "→ %s · стадия %d" % [loc, Game.stage], GOLD)
 	_boss_wins += 1
 	_session_boss_wins += 1
@@ -3709,7 +4012,7 @@ func _snap_scene_visuals() -> void:
 		_enemy_tw.kill()   # недоигранная анимация смерти не перезапишет новый вид
 	if Game.store_shot_mode:
 		# tools/store_shots.gd задаёт врага явно — не рандомить поверх
-		var li: int = (Game.location() - 1) % LOC_BG_PATHS.size()
+		var li: int = Game.visual_location() % LOC_BG_PATHS.size()
 		if _loc_bg.has(li) and is_instance_valid(_bgrect):
 			_bgrect.texture = _loc_bg[li]
 	else:
@@ -3810,7 +4113,7 @@ func _build_prestige_panel() -> void:
 	for line in [
 		"Черепа выпадают с Боссов.",
 		"Начни Новую Сказку и потрать Черепа на вечные усиления.",
-		"Твой прогресс, золото и прокачка героев сбросятся, но вечные усиления останутся навсегда и ты пройдёшь ещё дальше!",
+		"Твой прогресс, серебро и прокачка героев сбросятся, но вечные усиления останутся навсегда и ты пройдёшь ещё дальше!",
 		"ХОЙ!",
 	]:
 		var p := Label.new()
@@ -4099,7 +4402,7 @@ func _refresh_prestige() -> void:
 	if is_instance_valid(_prestige_step1_close) and _prestige_step1_close.visible:
 		_prestige_step1_close.disabled = _prestige_lock > 0
 	if is_instance_valid(_prestige_summary_lbl):
-		_prestige_summary_lbl.text = "Сейчас: ×%s золото · ×%s DPS · ×%s тап" % [
+		_prestige_summary_lbl.text = "Сейчас: ×%s серебро · ×%s DPS · ×%s тап" % [
 			_fmt_mult(Game.prestige_gold_mult()), _fmt_mult(Game.prestige_dps_mult()), _fmt_mult(Game.prestige_tap_mult())]
 	for id in _prestige_rows:
 		var r: Dictionary = _prestige_rows[id]
@@ -4734,7 +5037,7 @@ func _maybe_klad_hint() -> void:
 	_klad_hint_seen = true
 	_save_settings()
 	_side_ping(_side_klad, 3, GOLD)
-	_show_klad_tip("Глянь короткий ролик — золото удвоится. Халявы много не бывает.")
+	_show_klad_tip("Глянь короткий ролик — серебро удвоится. Халявы много не бывает.")
 
 
 func _show_klad_tip(msg: String) -> void:
@@ -4899,18 +5202,10 @@ func _build_sidebars() -> void:
 	_side_review.root.visible = false
 	_side_review["shown"] = false
 
-	_side_catch = _make_side_slot("ЗОЛОТО!", GOLD, "res://art/troupe/v3/jester.png", true)
+	_side_catch = _make_side_slot("Золотой Дождь", GOLD, "res://art/troupe/v3/jester.png", true)
 	_side_left.add_child(_side_catch.root)
 	_side_catch.btn.pressed.connect(_on_catch_pressed)
-	if is_instance_valid(_side_catch.get("title")):
-		_side_catch.title.add_theme_font_size_override("font_size", 22)
-	if OS.has_feature("editor"):
-		_side_salvo_dbg = _make_side_slot("ЗАЛП ∞", GOLD, "res://art/troupe/v3/witch.png", false)
-		_side_left.add_child(_side_salvo_dbg.root)
-		_side_salvo_dbg.btn.pressed.connect(_on_salvo_debug_pressed)
-		if is_instance_valid(_side_salvo_dbg.get("title")):
-			_side_salvo_dbg.title.add_theme_font_size_override("font_size", 20)
-		_side_slot_set_visible(_side_salvo_dbg, true, true)
+	_sync_interlude_slot_look()
 
 	_side_klad = _make_side_slot("КЛАД", GOLD, "res://art/ui/side/klad.png", false)
 	_side_right.add_child(_side_klad.root)
@@ -5504,7 +5799,7 @@ func _refresh_daily() -> void:
 		if String(r.hero) != "":
 			parts.append(String(Game.ALLIES[r.hero].name))
 		if float(r.gold) > 0.0:
-			parts.append("%s Золота" % fmt(float(r.gold)))
+			parts.append("%s серебра" % fmt(float(r.gold)))
 		if int(r.bells) > 0:
 			parts.append("%d Черепов" % int(r.bells))
 		# гранд-финал: компактнее — имя, затем награды через «·»
@@ -5519,7 +5814,7 @@ func _refresh_daily() -> void:
 			elif int(r.bells) > 0:
 				s.icon.texture = _skull_tex
 			else:
-				s.icon.texture = _gold_tex
+				s.icon.texture = _wallet_tex()
 		var claimed: bool = d < cur
 		var current: bool = d == cur
 		if is_instance_valid(s.get("check")):
@@ -5674,7 +5969,7 @@ func _on_daily_claim() -> void:
 		return
 	UiSfx.play("ui_reward_claim")
 	if float(r.gold) > 0.0 and is_instance_valid(_gold_label):
-		_fly_coins(from, _global_center(_gold_label), 14, GOLD, _gold_tex, _gold_icon, 40)
+		_fly_coins(from, _wallet_center(), 14, SILVER, _wallet_tex(), _gold_icon, 40)
 	if int(r.bells) > 0 and is_instance_valid(_skull_icon_top):
 		_fly_coins(from, _global_center(_skull_icon_top), 8, Color("#cdbfd6"), _skull_tex, _skull_icon_top, 41)
 	if String(r.hero) != "":
@@ -5711,7 +6006,7 @@ func _maybe_daily_intro() -> void:
 const TUT_STEPS := [
 	{"lead": "Бей!",     "text": "Тапай по нечисти, пока не завалишь!"},
 	{"lead": "Сильнее!", "text": "Прокачай свой удар!"},
-	{"lead": "Труппа",   "text": "Найми героя за золото, он будет бить сам!"},
+	{"lead": "Труппа",   "text": "Найми героя за серебро, он будет бить сам!"},
 	{"lead": "Ярость!",  "text": "Тапы копят ярость. Нажми, крикни «ХОЙ!» и начнётся ПАНК-РОК!"},
 ]
 
@@ -5992,6 +6287,7 @@ func _load_settings() -> void:
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS_PATH) == OK:
 		_music_on = bool(cf.get_value("audio", "music_on", true))
+		_sfx_on = bool(cf.get_value("audio", "sfx_on", true))
 		_reduce_fx = bool(cf.get_value("video", "reduce_fx", false))
 		_notify_on = bool(cf.get_value("flags", "notify_on", true))
 		Notify.enabled = _notify_on
@@ -6000,6 +6296,8 @@ func _load_settings() -> void:
 		_welcome_seen = bool(cf.get_value("flags", "welcome_seen", false))
 		_push_asks = int(cf.get_value("flags", "push_asks", 0))
 		_tut_done = bool(cf.get_value("flags", "tut_done", false))
+		_catch_intro_done = bool(cf.get_value("flags", "catch_intro_done", false))
+		_catch_first_run_done = bool(cf.get_value("flags", "catch_first_run_done", false))
 		_review_asked = bool(cf.get_value("flags", "review_asked", false))
 		_review_done = bool(cf.get_value("flags", "review_done", _review_asked))
 		_review_attempts = int(cf.get_value("flags", "review_attempts", 0))
@@ -6012,6 +6310,7 @@ func _load_settings() -> void:
 func _save_settings() -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("audio", "music_on", _music_on)
+	cf.set_value("audio", "sfx_on", _sfx_on)
 	cf.set_value("video", "reduce_fx", _reduce_fx)
 	cf.set_value("flags", "notify_on", _notify_on)
 	cf.set_value("flags", "prestige_intro_seen", _prestige_intro_seen)
@@ -6019,6 +6318,8 @@ func _save_settings() -> void:
 	cf.set_value("flags", "welcome_seen", _welcome_seen)
 	cf.set_value("flags", "push_asks", _push_asks)
 	cf.set_value("flags", "tut_done", _tut_done)
+	cf.set_value("flags", "catch_intro_done", _catch_intro_done)
+	cf.set_value("flags", "catch_first_run_done", _catch_first_run_done)
 	cf.set_value("flags", "review_asked", _review_asked or _review_done)
 	cf.set_value("flags", "review_done", _review_done)
 	cf.set_value("flags", "review_attempts", _review_attempts)
@@ -6030,6 +6331,9 @@ func _apply_settings() -> void:
 	var mi: int = AudioServer.get_bus_index("Music")
 	if mi != -1:
 		AudioServer.set_bus_mute(mi, not _music_on)
+	var si: int = AudioServer.get_bus_index("SFX")
+	if si != -1:
+		AudioServer.set_bus_mute(si, not _sfx_on)
 
 func _fit_debug_window_m52() -> void:
 	if Game.store_shot_mode or not OS.is_debug_build():
@@ -6050,6 +6354,12 @@ func _fit_debug_window_m52() -> void:
 func _input(event: InputEvent) -> void:
 	if Game.store_shot_mode or not OS.is_debug_build():
 		return
+	if event is InputEventKey and not (event as InputEventKey).echo:
+		var chord: bool = Input.is_physical_key_pressed(KEY_Z) and Input.is_physical_key_pressed(KEY_X) and Input.is_physical_key_pressed(KEY_C)
+		if chord and not _zxc_held:
+			_toggle_loc_dev()
+			get_viewport().set_input_as_handled()
+		_zxc_held = chord
 	var rail := get_node_or_null("%TroupeRail") as ScrollContainer
 	if rail == null or not rail.visible:
 		return
@@ -6103,18 +6413,6 @@ func _rail_has_mouse(rail: ScrollContainer) -> bool:
 	return rail.get_global_rect().has_point(rail.get_global_mouse_position())
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if Game.store_shot_mode or not OS.is_debug_build():
-		return
-	if not (event is InputEventKey) or event.echo:
-		return
-	var chord: bool = Input.is_physical_key_pressed(KEY_Z) and Input.is_physical_key_pressed(KEY_X) and Input.is_physical_key_pressed(KEY_C)
-	if chord and not _zxc_held:
-		_toggle_loc_dev()
-		get_viewport().set_input_as_handled()
-	_zxc_held = chord
-
-
 func _toggle_loc_dev() -> void:
 	if not is_instance_valid(_loc_dev_root):
 		return
@@ -6125,7 +6423,7 @@ func _build_loc_dev() -> void:
 	if Game.store_shot_mode or not OS.is_debug_build():
 		return
 	var layer := CanvasLayer.new()
-	layer.layer = UI_Z_TOAST
+	layer.layer = 96
 	layer.name = "LocDevLayer"
 	layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(layer)
@@ -6182,11 +6480,39 @@ func _build_loc_dev() -> void:
 	vb.add_child(en)
 	_loc_dev_enemy_opt = en
 
+	var mg_l := Label.new()
+	mg_l.text = "Антракт"
+	_lab(mg_l, F_SMALL, MUTED)
+	vb.add_child(mg_l)
+	var mg1 := HBoxContainer.new()
+	mg1.add_theme_constant_override("separation", 8)
+	vb.add_child(mg1)
+	mg1.add_child(_loc_dev_action_btn("Ловец", func() -> void: _dev_launch_minigame("catch", false)))
+	mg1.add_child(_loc_dev_action_btn("Залп", func() -> void: _dev_launch_minigame("salvo", false)))
+	var mg2 := HBoxContainer.new()
+	mg2.add_theme_constant_override("separation", 8)
+	vb.add_child(mg2)
+	mg2.add_child(_loc_dev_action_btn("Ловец ∞", func() -> void: _dev_launch_minigame("catch", true)))
+	mg2.add_child(_loc_dev_action_btn("Залп ∞", func() -> void: _dev_launch_minigame("salvo", true)))
+	vb.add_child(_loc_dev_action_btn("В кликер", _dev_return_clicker))
+
 	var hint := Label.new()
 	hint.text = "Z+X+C — закрыть · 10 локаций в стадиях"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lab(hint, F_SMALL, MUTED)
 	vb.add_child(hint)
+
+
+func _loc_dev_action_btn(text: String, cb: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.focus_mode = Control.FOCUS_NONE
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.custom_minimum_size = Vector2(0, 44)
+	b.add_theme_font_size_override("font_size", F_SMALL)
+	_btn_hud(b, "primary")
+	b.pressed.connect(cb)
+	return b
 
 
 func _fill_dev_bg_options(opt: OptionButton) -> void:
@@ -6279,11 +6605,11 @@ func _apply_dev_enemy_texture(enemy_id: String) -> void:
 
 
 func _build_settings() -> void:
-	# шестерёнка в правом верхнем (RightCol): BloodLines icon-кнопка, без emoji/CTA
+	# шестерёнка в левом верхнем (LeftCol): ресурсы справа, в тот же угол, что золото антрактов
 	_gear_btn = Button.new()
 	_gear_btn.focus_mode = Control.FOCUS_NONE
 	_gear_btn.custom_minimum_size = Vector2(UI_GEAR_SIZE, UI_GEAR_SIZE)
-	_gear_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_gear_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	var empty := StyleBoxEmpty.new()
 	for st in ["normal", "hover", "pressed", "focus", "disabled"]:
 		_gear_btn.add_theme_stylebox_override(st, empty)
@@ -6300,8 +6626,8 @@ func _build_settings() -> void:
 		_gear_btn.add_theme_font_size_override("font_size", 24)
 		_btn_hud(_gear_btn, "primary")
 	_gear_btn.pressed.connect(_open_settings)
-	var rc := get_node_or_null("%RightCol")
-	if rc: rc.add_child(_gear_btn)
+	var lc := get_node_or_null("%LeftCol")
+	if lc: lc.add_child(_gear_btn)
 
 	_settings_layer = CanvasLayer.new()
 	_settings_layer.layer = UI_Z_MODAL
@@ -6338,6 +6664,7 @@ func _build_settings() -> void:
 	vb.add_child(_settings_sep())
 
 	vb.add_child(_settings_toggle_row("Музыка", _music_on, _on_music_toggled))
+	vb.add_child(_settings_toggle_row("Звук", _sfx_on, _on_sfx_toggled))
 	vb.add_child(_settings_toggle_row("Меньше эффектов", _reduce_fx, _on_reduce_toggled))
 	vb.add_child(_settings_toggle_row("Уведомления", _notify_on, _on_notify_toggled))
 
@@ -6497,6 +6824,8 @@ func _on_dev_fresh_start() -> void:
 
 func _wipe_onboarding_flags() -> void:
 	_tut_done = false
+	_catch_intro_done = false
+	_catch_first_run_done = false
 	_tut_step = -1
 	_tut_shown = false
 	_tut_taps = 0
@@ -6519,6 +6848,11 @@ func _wipe_onboarding_flags() -> void:
 
 func _on_music_toggled(on: bool) -> void:
 	_music_on = on
+	_apply_settings()
+	_save_settings()
+
+func _on_sfx_toggled(on: bool) -> void:
+	_sfx_on = on
 	_apply_settings()
 	_save_settings()
 
@@ -6643,7 +6977,7 @@ func _on_enemy_killed() -> void:
 	_flash_hp()   # блик-«укус» и на добивающем ударе (когда HP < урона)
 	if _coin_cd <= 0.0:
 		_coin_cd = 0.12
-		_fly_coins(_global_center(_enemy), _global_center(_gold_label), 14, GOLD, _gold_tex, _gold_icon)
+		_fly_coins(_global_center(_enemy), _wallet_center(), 14, SILVER, _wallet_tex(), _gold_icon)
 	_enemy_idx += 1
 	_play_enemy_death()
 
@@ -6711,6 +7045,11 @@ func _flash_hp() -> void:
 func _global_center(n: Control) -> Vector2:
 	return n.global_position + n.size * 0.5
 
+
+func _wallet_center() -> Vector2:
+	var n: Control = _gold_icon if is_instance_valid(_gold_icon) else _gold_label
+	return _global_center(n)
+
 func _bezier(a: Vector2, b: Vector2, c: Vector2, t: float) -> Vector2:
 	return a.lerp(b, t).lerp(b.lerp(c, t), t)
 
@@ -6718,7 +7057,7 @@ func _fly_coins(from_pos: Vector2, to_pos: Vector2, count: int, color: Color, te
 	if not is_instance_valid(_fx):
 		return
 	if tex == null:
-		tex = _gold_tex   # по умолчанию — монетка золота
+		tex = _wallet_tex()   # кошелёк кликера — серебро
 	var n: int = mini(count, 22)   # кап при спаме киллов
 	for i in n:
 		var sz: float = randf_range(16.0, 26.0)
@@ -6860,13 +7199,13 @@ func _show_offline_popup(amount: float) -> void:
 	got.add_child(got_pref)
 	var amt_l := Label.new()
 	amt_l.text = fmt(amount)
-	_lab(amt_l, F_TITLE, GOLD)
+	_lab(amt_l, F_TITLE, SILVER)
 	if _header_font:
 		amt_l.add_theme_font_override("font", _header_font)
 	got.add_child(amt_l)
-	if _gold_tex:
+	if _wallet_tex():
 		var ic := TextureRect.new()
-		ic.texture = _gold_tex
+		ic.texture = _wallet_tex()
 		ic.custom_minimum_size = Vector2(34, 34)
 		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -6905,7 +7244,7 @@ func _collect_offline(mult: float) -> void:
 	UiSfx.play("ui_reward_claim")
 	if is_instance_valid(_gold_label):
 		_fly_coins(_global_center(_offline_panel) if is_instance_valid(_offline_panel) else Vector2(360, 640),
-			_global_center(_gold_label), 18, GOLD, _gold_tex, _gold_icon)
+			_wallet_center(), 18, SILVER, _wallet_tex(), _gold_icon)
 	if is_instance_valid(_offline_root):
 		_pop_close_free(_offline_root, _offline_panel, false)
 	if is_instance_valid(_offline_layer):
@@ -6962,7 +7301,10 @@ const _UNITS := ["", "K", "M", "B", "T", "aa", "ab", "ac", "ad", "ae", "af", "ag
 
 # --- Store listing screenshots (tools/store_shots.gd) ------------------------
 func store_shot_clean_ui() -> void:
+	store_shot_close_minigame()
 	_tut_done = true
+	_catch_intro_done = true
+	_catch_first_run_done = true
 	_welcome_seen = true
 	_daily_intro_seen = true
 	_prestige_intro_seen = true
@@ -7166,6 +7508,69 @@ func store_shot_set_buy_mult(m: int) -> void:
 	_set_mult(m)
 
 
+## Антракт для листинга: mount без fade + store_shot_pose.
+func store_shot_minigame(kind: String, pose: String) -> void:
+	store_shot_close_minigame()
+	_interlude_kind = kind if kind == "salvo" else "catch"
+	_interlude_playing = _interlude_kind
+	_interlude_sandbox = false
+	_catch_fading = false
+	_catch_retry_used = true
+	Game.minigame_lock = true
+	var packed: PackedScene = load(_interlude_scene_path()) as PackedScene
+	if packed == null:
+		Game.minigame_lock = false
+		return
+	_catch_layer = CanvasLayer.new()
+	_catch_layer.layer = 72
+	_catch_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_catch_layer)
+	_catch_game = packed.instantiate() as Control
+	if _catch_game == null or not _catch_game.has_method("setup"):
+		if is_instance_valid(_catch_layer):
+			_catch_layer.queue_free()
+		_catch_layer = null
+		_catch_game = null
+		Game.minigame_lock = false
+		return
+	_catch_game.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_catch_layer.add_child(_catch_game)
+	_catch_hide_clicker()
+	_catch_game.setup({
+		"stage": Game.stage,
+		"duration": Balance.CATCH_DURATION_SEC,
+		"bg_path": _catch_random_bg(),
+		"infinite": false,
+		"intro": false,
+		"first_run": false,
+	})
+	# layout / textures settle
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if is_instance_valid(_catch_game) and _catch_game.has_method("store_shot_pose"):
+		_catch_game.call("store_shot_pose", pose)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+
+func store_shot_close_minigame() -> void:
+	if is_instance_valid(_catch_game):
+		if _catch_game.finished.is_connected(_on_catch_finished):
+			_catch_game.finished.disconnect(_on_catch_finished)
+		_catch_game.queue_free()
+	_catch_game = null
+	if is_instance_valid(_catch_layer):
+		_catch_layer.queue_free()
+	_catch_layer = null
+	_catch_fading = false
+	_interlude_playing = ""
+	_interlude_sandbox = false
+	if not _catch_stash.is_empty():
+		_catch_restore_clicker()
+	Game.minigame_lock = false
+
+
 func store_shot_show_bark(hid: String, line: String) -> void:
 	if is_instance_valid(_bark_layer):
 		_bark_layer.visible = true
@@ -7245,7 +7650,7 @@ func trailer_upgrade_tap(n: int = 1) -> void:
 	if Game.buy_tap_n(n):
 		_refresh()
 		if is_instance_valid(_klinok_w) and _klinok_w.has("cost"):
-			_fly_coins(_global_center(_gold_label), _global_center(_klinok_w.cost), 8, GOLD, null, null, 0, false)
+			_fly_coins(_wallet_center(), _global_center(_klinok_w.cost), 8, SILVER, _wallet_tex(), null, 0, false)
 
 
 func trailer_upgrade_ally(aid: String, n: int = 1) -> void:
@@ -7254,7 +7659,7 @@ func trailer_upgrade_ally(aid: String, n: int = 1) -> void:
 			break
 	_refresh()
 	if _card_widgets.has(aid) and is_instance_valid(_card_widgets[aid].get("cost")):
-		_fly_coins(_global_center(_gold_label), _global_center(_card_widgets[aid].cost), 8, GOLD, null, null, 0, false)
+		_fly_coins(_wallet_center(), _global_center(_card_widgets[aid].cost), 8, SILVER, _wallet_tex(), null, 0, false)
 
 
 func trailer_show_bark(hid: String, line: String) -> void:
@@ -7317,3 +7722,16 @@ func fmt(n: float) -> String:
 	elif s.ends_with("0"):
 		s = s.substr(0, s.length() - 1)
 	return s + _UNITS[i]
+
+
+func _fmt_payout_rate(n: float) -> String:
+	if n >= 100.0:
+		return fmt(n)
+	var s := "%.2f" % n
+	if s.ends_with("0"):
+		s = s.substr(0, s.length() - 1)
+	if s.ends_with("0"):
+		s = s.substr(0, s.length() - 1)
+	if s.ends_with("."):
+		s = s.substr(0, s.length() - 1)
+	return s

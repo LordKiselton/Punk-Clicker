@@ -36,6 +36,16 @@ Godot_v4.6.1-stable_win64_console.exe --path C:\mobile-clicker res://tools/store
 | 23 | `23_wurdulak.png` | 24/7 · упырь-шаурмэн |
 | 24 | `24_harpy.png` | Город · гарпия |
 | 25 | `25_dwarf.png` | Замок · гном |
+| 26 | `26_catch_rain.png` | Золотой Дождь · дождь |
+| 27 | `27_catch_bomb.png` | Золотой Дождь · бомба |
+| 28 | `28_catch_scoop.png` | Золотой Дождь · захват |
+| 29 | `29_catch_win.png` | Золотой Дождь · победа |
+| 30 | `30_catch_late.png` | Золотой Дождь · финал |
+| 31 | `31_salvo_fight.png` | Ведьмолет! · бой |
+| 32 | `32_salvo_hoy.png` | Ведьмолет! · Жми на Ведьму! |
+| 33 | `33_salvo_hurt.png` | Ведьмолет! · 1 сердце |
+| 34 | `34_salvo_dense.png` | Ведьмолет! · густая волна |
+| 35 | `35_salvo_win.png` | Ведьмолет! · улёт |
 
 `OVERWRITE=false` в `store_shots.gd` — повторный прогон не затирает уже лежащие PNG.
 

@@ -32,6 +32,7 @@ Notify="*res://game/autoload/Notify.gd"
 Analytics="*res://game/autoload/Analytics.gd"
 UiSfx="*res://game/autoload/UiSfx.gd"
 
+McpBridge="*res://.mcp/godot-runtime/bridge/mcp_bridge.gd"
 [display]
 
 window/size/viewport_width=720

@@ -45,17 +45,28 @@ const ITEM_CAP := 64
 const FONT_HEADER := "res://fonts/RuslanDisplay.ttf"
 const GOLD := Color("#e0c341")
 const BLOOD := Color("#b5121b")
+const SURF := Color("#241a2c")
+const SURF_BORDER := Color("#3a2b44")
+const TXT := Color("#e8e0ee")
+const MUTED := Color("#9a8fa6")
+const WOOD := Color("#2a1f12")
+const WOOD_BORDER := Color("#7a5a1f")
+const DARK := Color("#120d18")
 const SLAM_GOLD := Color("#ffd23a")
-const F_BOSS := 42
-const F_RES := 30
+const F_TITLE := 34
+const F_BODY := 26
+const F_SUB := 22
+const INTRO_STEPS := [
+	{"lead": "Хватай!", "text": "Хватай меня и таскай повсюду, я соберу для тебя ЗОЛОТО!"},
+	{"lead": "Стой!", "text": "ЗОЛОТО — хватай! БОМБЫ — НЕ ХВАТАЙ!"},
+]
+const TUT_SHADER := "res://game/scenes/tutorial_spotlight.gdshader"
 const LERP_SEC := 0.28
 const WIN_SLAM_DELAY := 0.4
 const WIN_AFTER_LAST := 1.0
 const WIN_MAX := 8.0
-const SNEEZE_LIFT := 56.0
 const WIN_JUMP_SEC := 0.42
 const PULSE_AMT := 0.08
-const SNEEZE_N := 6
 const GRAVITY := 820.0
 const OFFSCREEN := 96.0
 const BOUNCE := 0.62
@@ -74,6 +85,7 @@ var _hud: Label
 var _gold_label: Label
 var _gold_icon: TextureRect
 var _gold_row: HBoxContainer
+var _gold_plate: PanelContainer
 var _header_font: Font
 var _displayed_caught: float = 0.0
 var _pulse: float = 0.0
@@ -81,7 +93,6 @@ var _winning: bool = false
 var _win_t: float = 0.0
 var _win_slammed: bool = false
 var _win_empty_t: float = -1.0
-var _sparks: Array[Dictionary] = []
 var _bg: TextureRect
 var _pose: String = "idle"
 var _holding: bool = false
@@ -107,6 +118,24 @@ var _lane_i: int = 0
 var _pattern_cd: float = 0.0
 var _items: Array[Dictionary] = []
 var _rng := RandomNumberGenerator.new()
+var _first_run: bool = false
+var _need_intro: bool = false
+var _intro_step: int = -1
+var _intro_shown: bool = false
+var _intro_bubble_locked: bool = false
+var _intro_pulse: float = 0.0
+var _intro_dim: ColorRect
+var _intro_mat: ShaderMaterial
+var _intro_bubble: PanelContainer
+var _intro_lead: Label
+var _intro_text: Label
+var _intro_demo_gold: TextureRect
+var _intro_demo_bomb: TextureRect
+var _intro_bubble_pos: Vector2 = Vector2.ZERO
+var _intro_anim: Tween
+
+signal intro_step(step: int)
+signal intro_done
 
 
 func minigame_kind() -> String:
@@ -115,6 +144,10 @@ func minigame_kind() -> String:
 
 func setup(ctx: Dictionary) -> void:
 	_time_left = float(ctx.get("duration", Balance.CATCH_DURATION_SEC))
+	_need_intro = bool(ctx.get("intro", false))
+	_first_run = bool(ctx.get("first_run", false))
+	if _first_run:
+		_bomb_cd = Balance.CATCH_FIRST_BOMB_SEC
 	var bg_path: String = String(ctx.get("bg_path", ""))
 	if bg_path != "" and ResourceLoader.exists(bg_path) and is_instance_valid(_bg):
 		_bg.texture = load(bg_path)
@@ -122,9 +155,179 @@ func setup(ctx: Dictionary) -> void:
 
 
 func begin() -> void:
-	_live = true
 	_reshuffle_lanes()
-	_slam("ЗОЛОТОЙ\nДОЖДЬ")
+	if _need_intro:
+		_slam("ЗОЛОТОЙ\nДОЖДЬ", _start_intro)
+	else:
+		_live = true
+		_slam("ЗОЛОТОЙ\nДОЖДЬ")
+
+
+## Статичный кадр для store/listing (без симуляции).
+func store_shot_pose(kind: String, _opts: Dictionary = {}) -> void:
+	_need_intro = false
+	_intro_step = -1
+	_live = false
+	_ended = false
+	_winning = false
+	_pending_fail = false
+	_fuse = -1.0
+	_holding = true
+	_lerp_t = 1.0
+	_clear_store_items()
+	if is_instance_valid(_field) and _field.size.x >= 8.0:
+		_home = Vector2((_field.size.x - JESTER_H) * 0.5, _field.size.y * 0.52)
+	match kind:
+		"rain":
+			_time_left = 19.0
+			_caught = 47
+			_displayed_caught = 47.0
+			_place_jester_norm(0.48, 0.58)
+			_apply_pose("ur")
+			_scatter_coins([
+				Vector2(0.22, 0.18), Vector2(0.38, 0.12), Vector2(0.55, 0.16), Vector2(0.72, 0.10),
+				Vector2(0.28, 0.28), Vector2(0.48, 0.24), Vector2(0.66, 0.30), Vector2(0.80, 0.22),
+				Vector2(0.18, 0.40), Vector2(0.42, 0.36), Vector2(0.60, 0.42), Vector2(0.78, 0.38),
+				Vector2(0.34, 0.48), Vector2(0.58, 0.52), Vector2(0.74, 0.48),
+			])
+		"bomb":
+			_time_left = 14.0
+			_caught = 33
+			_displayed_caught = 33.0
+			_place_jester_norm(0.42, 0.60)
+			_apply_pose("ul")
+			_scatter_coins([
+				Vector2(0.20, 0.16), Vector2(0.45, 0.12), Vector2(0.68, 0.18),
+				Vector2(0.30, 0.30), Vector2(0.55, 0.26), Vector2(0.78, 0.32),
+				Vector2(0.25, 0.44), Vector2(0.62, 0.46),
+			])
+			_store_drop_item(true, Vector2(0.36, 0.42))
+		"scoop":
+			_time_left = 22.0
+			_caught = 61
+			_displayed_caught = 61.0
+			_place_jester_norm(0.62, 0.55)
+			_apply_pose("dr")
+			_scatter_coins([
+				Vector2(0.55, 0.48), Vector2(0.68, 0.44), Vector2(0.78, 0.52),
+				Vector2(0.48, 0.36), Vector2(0.72, 0.34), Vector2(0.30, 0.20),
+				Vector2(0.18, 0.28), Vector2(0.40, 0.14), Vector2(0.58, 0.18),
+				Vector2(0.82, 0.24), Vector2(0.25, 0.42),
+			])
+		"win":
+			_time_left = 0.0
+			_caught = 128
+			_displayed_caught = 128.0
+			_place_jester_norm(0.50, 0.52)
+			_apply_pose("win")
+			_scatter_coins([
+				Vector2(0.30, 0.22), Vector2(0.48, 0.16), Vector2(0.66, 0.20),
+				Vector2(0.38, 0.34), Vector2(0.58, 0.30),
+			])
+		"late":
+			_time_left = 3.0
+			_caught = 96
+			_displayed_caught = 96.0
+			_place_jester_norm(0.36, 0.58)
+			_apply_pose("dl")
+			_scatter_coins([
+				Vector2(0.15, 0.10), Vector2(0.28, 0.08), Vector2(0.42, 0.12), Vector2(0.56, 0.06),
+				Vector2(0.70, 0.10), Vector2(0.84, 0.14), Vector2(0.20, 0.22), Vector2(0.36, 0.18),
+				Vector2(0.52, 0.24), Vector2(0.68, 0.20), Vector2(0.82, 0.26), Vector2(0.24, 0.34),
+				Vector2(0.46, 0.32), Vector2(0.64, 0.36), Vector2(0.78, 0.40), Vector2(0.32, 0.46),
+				Vector2(0.58, 0.48), Vector2(0.74, 0.52),
+			])
+		_:
+			_time_left = 20.0
+			_caught = 28
+			_displayed_caught = 28.0
+			_place_jester_norm(0.50, 0.56)
+			_apply_pose("idle")
+			_scatter_coins([
+				Vector2(0.30, 0.18), Vector2(0.50, 0.14), Vector2(0.70, 0.20),
+				Vector2(0.40, 0.30), Vector2(0.60, 0.28),
+			])
+	_update_hud()
+	_layout_hud()
+
+
+func _clear_store_items() -> void:
+	for it in _items:
+		_free_glow(it)
+		var n: Variant = it.get("n")
+		if n is Node and is_instance_valid(n):
+			(n as Node).queue_free()
+	_items.clear()
+
+
+func _place_jester_norm(nx: float, ny: float) -> void:
+	if not is_instance_valid(_field) or not is_instance_valid(_jester):
+		return
+	var fs: Vector2 = _field.size
+	if fs.x < 8.0:
+		return
+	var x: float = clampf(nx * fs.x - JESTER_H * 0.5, 0.0, fs.x - JESTER_H)
+	var y: float = clampf(ny * fs.y - JESTER_H * 0.5, fs.y * 0.48, fs.y - JESTER_H)
+	_jester.position = Vector2(x, y)
+	_jester.size = Vector2(JESTER_H, JESTER_H)
+	_jester.pivot_offset = Vector2(JESTER_H, JESTER_H) * 0.5
+	_jester.visible = true
+
+
+func _scatter_coins(norms: Array) -> void:
+	for p in norms:
+		if p is Vector2:
+			_store_drop_item(false, p as Vector2)
+
+
+func _store_drop_item(bomb: bool, norm: Vector2) -> void:
+	if not is_instance_valid(_field):
+		return
+	var fs: Vector2 = _field.size
+	if fs.x < 8.0:
+		return
+	var sz: float = BOMB_SZ if bomb else COIN_SZ
+	var c: Vector2 = Vector2(norm.x * fs.x, norm.y * fs.y)
+	var tr := TextureRect.new()
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tr.z_index = 3
+	tr.size = Vector2(sz, sz)
+	tr.pivot_offset = Vector2(sz, sz) * 0.5
+	tr.position = c - Vector2(sz, sz) * 0.5
+	tr.rotation = _rng.randf_range(-0.35, 0.35)
+	if bomb and _tex_bomb:
+		tr.texture = _tex_bomb
+	elif (not bomb) and _tex_gold:
+		tr.texture = _tex_gold
+	else:
+		tr.modulate = Color("#c42a2a") if bomb else Color("#e0c341")
+	_field.add_child(tr)
+	var glow: Control = null
+	if bomb:
+		glow = Panel.new()
+		glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		glow.show_behind_parent = true
+		glow.z_index = -1
+		var ring := StyleBoxFlat.new()
+		ring.bg_color = Color(0, 0, 0, 0)
+		ring.set_corner_radius_all(999)
+		ring.set_border_width_all(5)
+		ring.border_color = Color(1.0, 0.22, 0.14, 1.0)
+		ring.set_content_margin_all(0)
+		glow.add_theme_stylebox_override("panel", ring)
+		tr.add_child(glow)
+		glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		glow.offset_left = -10.0
+		glow.offset_top = -10.0
+		glow.offset_right = 10.0
+		glow.offset_bottom = 10.0
+	_items.append({
+		"n": tr, "v": Vector2.ZERO, "spin": 0.0, "bomb": bomb, "sz": sz,
+		"sw": false, "swt": 0.0, "in": true, "fb": 0, "fbmax": 0,
+		"drop": false, "fx": false, "glow": glow, "ph": 0.0,
+	})
 
 
 func _ready() -> void:
@@ -134,6 +337,8 @@ func _ready() -> void:
 	_rng.randomize()
 	_load_tex()
 	_build()
+	resized.connect(_layout_hud)
+	_layout_hud()
 	call_deferred("_place_home")
 
 
@@ -216,44 +421,40 @@ func _build() -> void:
 
 	_hud = Label.new()
 	_hud.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_hud.offset_top = 28.0
-	_hud.offset_bottom = 92.0
 	_hud.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hud.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_hud.z_index = 9
-	_hud.add_theme_font_size_override("font_size", F_BOSS)
+	_hud.add_theme_font_size_override("font_size", HUD_TIMER_FONT)
 	_hud.add_theme_color_override("font_color", BLOOD)
-	_hud.add_theme_color_override("font_outline_color", Color.BLACK)
-	_hud.add_theme_constant_override("outline_size", 10)
+	_hud.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	_hud.add_theme_constant_override("outline_size", 8)
 	_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if _header_font:
 		_hud.add_theme_font_override("font", _header_font)
 	add_child(_hud)
 
+	_gold_plate = make_res_plate()
+	_gold_plate.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_gold_plate.anchor_left = 1.0
+	_gold_plate.anchor_right = 1.0
+	_gold_plate.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	add_child(_gold_plate)
 	_gold_row = HBoxContainer.new()
-	_gold_row.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_gold_row.anchor_left = 1.0
-	_gold_row.anchor_right = 1.0
-	_gold_row.offset_left = -280.0
-	_gold_row.offset_right = -24.0
-	_gold_row.offset_top = 36.0
-	_gold_row.offset_bottom = 80.0
 	_gold_row.alignment = BoxContainer.ALIGNMENT_END
 	_gold_row.add_theme_constant_override("separation", 5)
 	_gold_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_gold_row.z_index = 9
-	add_child(_gold_row)
+	_gold_plate.add_child(_gold_row)
 	_gold_icon = TextureRect.new()
 	_gold_icon.texture = _tex_gold
-	_gold_icon.custom_minimum_size = Vector2(30, 30)
+	_gold_icon.custom_minimum_size = Vector2(HUD_GOLD_ICON, HUD_GOLD_ICON)
 	_gold_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_gold_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_gold_icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_gold_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_gold_icon.visible = _tex_gold != null
-	_gold_row.add_child(_gold_icon)
 	_gold_label = Label.new()
 	_gold_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_gold_label.add_theme_font_size_override("font_size", F_RES)
+	_gold_label.add_theme_font_size_override("font_size", HUD_GOLD_FONT)
 	_gold_label.add_theme_color_override("font_color", GOLD)
 	_gold_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	_gold_label.add_theme_constant_override("outline_size", 6)
@@ -261,7 +462,16 @@ func _build() -> void:
 	if _header_font:
 		_gold_label.add_theme_font_override("font", _header_font)
 	_gold_row.add_child(_gold_label)
+	_gold_row.add_child(_gold_icon)
 	_update_hud()
+	_build_intro()
+
+
+func _layout_hud() -> void:
+	if is_instance_valid(_hud):
+		_hud.offset_top = hud_row_top()
+		_hud.offset_bottom = hud_row_bottom()
+	fit_res_plate(_gold_plate, hud_row_top() + 6.0, hud_row_bottom() - 2.0)
 
 
 func _place_home() -> void:
@@ -344,7 +554,7 @@ func _update_pose() -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
-	if _ended or not _live or _winning:
+	if _ended or not _live or _winning or _intro_step >= 0:
 		return
 	if event is InputEventScreenTouch:
 		var st := event as InputEventScreenTouch
@@ -413,6 +623,9 @@ func _release() -> void:
 func _process(delta: float) -> void:
 	if _ended:
 		return
+	if _intro_step >= 0:
+		_tick_intro(delta)
+		return
 	_tick_shake(delta)
 	if _fuse >= 0.0:
 		_fuse -= delta
@@ -441,7 +654,6 @@ func _process(delta: float) -> void:
 		_pattern_cd -= delta
 		_tick_spawn()
 	_tick_items(delta)
-	_tick_sparks(delta)
 	_update_hud()
 	if _winning:
 		_win_t += delta
@@ -721,6 +933,7 @@ func _detonate() -> void:
 	_holding = false
 	if is_instance_valid(_jester):
 		_jester.visible = false
+	UiSfx.play("catch_blast")
 	_kick_shake()
 	_blast_wave()
 	_eject_caught()
@@ -888,12 +1101,13 @@ func _fade_blast_hold() -> void:
 
 func _update_hud() -> void:
 	if is_instance_valid(_hud):
-		_hud.text = "ДОЖДЬ · %d с" % maxi(0, ceili(_time_left))
+		_hud.text = "Золотой Дождь · %d с" % maxi(0, ceili(_time_left))
 	if is_instance_valid(_gold_label):
 		_displayed_caught = lerpf(_displayed_caught, float(_caught), clampf(get_process_delta_time() * 7.0, 0.0, 1.0))
 		if absf(_displayed_caught - float(_caught)) < 0.5:
 			_displayed_caught = float(_caught)
 		_gold_label.text = _fmt_n(_displayed_caught)
+		fit_res_plate(_gold_plate, hud_row_top() + 6.0, hud_row_bottom() - 2.0)
 
 
 func _fmt_n(n: float) -> String:
@@ -926,7 +1140,6 @@ func _tick_jester_pulse(delta: float) -> void:
 
 func _on_coin_caught() -> void:
 	_pulse = 1.0
-	_gold_sneeze()
 	_punch_gold()
 	UiSfx.play("ui_upgrade")
 
@@ -939,53 +1152,6 @@ func _punch_gold() -> void:
 	var tw := create_tween()
 	tw.tween_property(n, "scale", Vector2(0.88, 0.88), 0.05)
 	tw.tween_property(n, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
-
-func _gold_sneeze() -> void:
-	if not is_instance_valid(_field) or _tex_gold == null:
-		return
-	var origin: Vector2 = _lip_global() - _field.global_position + Vector2(0.0, -SNEEZE_LIFT)
-	for i in SNEEZE_N:
-		var tr := TextureRect.new()
-		tr.texture = _tex_gold
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		tr.z_index = 6
-		var sz := 11.0
-		tr.size = Vector2(sz, sz)
-		tr.pivot_offset = Vector2(sz, sz) * 0.5
-		tr.position = origin - tr.pivot_offset
-		_field.add_child(tr)
-		var ang: float = _rng.randf_range(-2.5, -0.65)
-		_sparks.append({
-			"n": tr,
-			"v": Vector2.from_angle(ang) * _rng.randf_range(140.0, 260.0),
-			"life": _rng.randf_range(0.16, 0.26),
-		})
-
-
-func _tick_sparks(delta: float) -> void:
-	var kill: Array[int] = []
-	for i in _sparks.size():
-		var sp: Dictionary = _sparks[i]
-		var n: TextureRect = sp["n"]
-		if not is_instance_valid(n):
-			kill.append(i)
-			continue
-		sp["life"] = float(sp["life"]) - delta
-		var v: Vector2 = sp["v"]
-		v.y += GRAVITY * 0.45 * delta
-		sp["v"] = v
-		n.position += v * delta
-		n.modulate.a = clampf(float(sp["life"]) / 0.18, 0.0, 1.0)
-		n.rotation += 8.0 * delta
-		if float(sp["life"]) <= 0.0:
-			n.queue_free()
-			kill.append(i)
-	kill.reverse()
-	for i in kill:
-		_sparks.remove_at(i)
 
 
 func _free_glow(it: Dictionary) -> void:
@@ -1040,6 +1206,271 @@ func _start_win() -> void:
 	_apply_pose("win")
 
 
+func _build_intro() -> void:
+	_intro_dim = ColorRect.new()
+	_intro_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_intro_dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_intro_mat = ShaderMaterial.new()
+	_intro_mat.shader = load(TUT_SHADER)
+	_intro_dim.material = _intro_mat
+	_intro_dim.visible = false
+	_intro_dim.z_index = 48
+	_intro_dim.z_as_relative = false
+	add_child(_intro_dim)
+
+	_intro_bubble = PanelContainer.new()
+	_intro_bubble.add_theme_stylebox_override("panel", _flat(SURF, BLOOD, 16, 2, 18))
+	_intro_bubble.mouse_filter = Control.MOUSE_FILTER_STOP
+	_intro_bubble.visible = false
+	_intro_bubble.z_index = 49
+	_intro_bubble.z_as_relative = false
+	add_child(_intro_bubble)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_intro_bubble.add_child(vb)
+	_intro_lead = Label.new()
+	_intro_lead.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lab(_intro_lead, F_TITLE, GOLD)
+	if _header_font:
+		_intro_lead.add_theme_font_override("font", _header_font)
+	vb.add_child(_intro_lead)
+	_intro_text = Label.new()
+	_intro_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_intro_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lab(_intro_text, F_BODY, TXT)
+	vb.add_child(_intro_text)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	vb.add_child(row)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(sp)
+	var nb := Button.new()
+	nb.text = "Далее →"
+	nb.focus_mode = Control.FOCUS_NONE
+	nb.add_theme_font_size_override("font_size", F_SUB)
+	_btn_hud(nb)
+	nb.pressed.connect(_intro_advance)
+	row.add_child(nb)
+
+
+func _start_intro() -> void:
+	_intro_step = 0
+	_intro_shown = false
+	_intro_bubble_locked = false
+	_show_intro_step()
+
+
+func _show_intro_step() -> void:
+	if _intro_step < 0 or _intro_step >= INTRO_STEPS.size():
+		return
+	intro_step.emit(_intro_step)
+	var s: Dictionary = INTRO_STEPS[_intro_step]
+	if is_instance_valid(_intro_lead):
+		_intro_lead.text = String(s.lead)
+	if is_instance_valid(_intro_text):
+		_intro_text.text = String(s.text)
+	if _intro_step == 1:
+		_spawn_intro_demos()
+	else:
+		_clear_intro_demos()
+	_intro_shown = true
+	_intro_set_shown(true)
+	_intro_layout_bubble(false)
+
+
+func _intro_advance() -> void:
+	_intro_step += 1
+	_intro_shown = false
+	_intro_bubble_locked = false
+	_intro_kill_anim()
+	if is_instance_valid(_intro_dim):
+		_intro_dim.visible = false
+		_intro_dim.modulate.a = 0.0
+	if is_instance_valid(_intro_bubble):
+		_intro_bubble.visible = false
+		_intro_bubble.modulate.a = 0.0
+		_intro_bubble.scale = Vector2.ONE
+	if _intro_step >= INTRO_STEPS.size():
+		_finish_intro()
+		return
+	_show_intro_step()
+
+
+func _finish_intro() -> void:
+	_intro_step = -1
+	_intro_shown = false
+	_clear_intro_demos()
+	_intro_kill_anim()
+	if is_instance_valid(_intro_dim):
+		_intro_dim.visible = false
+	if is_instance_valid(_intro_bubble):
+		_intro_bubble.visible = false
+	intro_done.emit()
+	_live = true
+
+
+func _tick_intro(delta: float) -> void:
+	if not _intro_shown:
+		return
+	_intro_pulse += delta
+	var info := _intro_target()
+	var r: Rect2 = info.rect
+	var sw: Vector2 = get_viewport().get_visible_rect().size
+	if _intro_mat:
+		_intro_mat.set_shader_parameter("vp", sw)
+		_intro_mat.set_shader_parameter("t_center", r.position + r.size * 0.5)
+		if String(info.shape) == "circle":
+			var rad: float = maxf(r.size.x, r.size.y) * 0.5
+			_intro_mat.set_shader_parameter("t_half", Vector2(rad, rad))
+			_intro_mat.set_shader_parameter("t_radius", rad)
+		else:
+			_intro_mat.set_shader_parameter("t_half", r.size * 0.5 + Vector2(12, 12))
+			_intro_mat.set_shader_parameter("t_radius", 16.0)
+		_intro_mat.set_shader_parameter("pulse", 0.5 + 0.5 * sin(_intro_pulse * 4.0))
+	_intro_layout_bubble(true)
+
+
+func _intro_target() -> Dictionary:
+	if _intro_step == 1 and is_instance_valid(_intro_demo_gold) and is_instance_valid(_intro_demo_bomb):
+		var a: Rect2 = _intro_demo_gold.get_global_rect()
+		var b: Rect2 = _intro_demo_bomb.get_global_rect()
+		var pos := Vector2(minf(a.position.x, b.position.x), minf(a.position.y, b.position.y))
+		var end := Vector2(maxf(a.end.x, b.end.x), maxf(a.end.y, b.end.y))
+		return {"rect": Rect2(pos, end - pos).grow(18.0), "shape": "rect"}
+	if is_instance_valid(_jester):
+		var gr: Rect2 = _jester.get_global_rect()
+		var c: Vector2 = gr.position + gr.size * Vector2(0.5, 0.42)
+		return {"rect": Rect2(c - Vector2(150, 150), Vector2(300, 300)), "shape": "circle"}
+	return {"rect": Rect2(40, 300, 640, 120), "shape": "rect"}
+
+
+func _intro_layout_bubble(keep_y: bool) -> void:
+	if not is_instance_valid(_intro_bubble):
+		return
+	var info := _intro_target()
+	var r: Rect2 = info.rect
+	var sw: Vector2 = get_viewport().get_visible_rect().size
+	var bw: float = maxf(200.0, sw.x - 36.0)
+	if is_instance_valid(_intro_text):
+		_intro_text.custom_minimum_size = Vector2(bw - 44.0, 0)
+	_intro_bubble.size = Vector2(bw, 1.0)
+	_intro_bubble.reset_size()
+	var bh: float = _intro_bubble.get_combined_minimum_size().y
+	bh = clampf(bh, 100.0, minf(260.0, sw.y * 0.32))
+	var by: float
+	if keep_y and _intro_bubble_locked:
+		by = clampf(_intro_bubble_pos.y, 20.0, sw.y - bh - 20.0)
+	else:
+		var below: bool = (r.position.y + r.size.y * 0.5) < sw.y * 0.5
+		by = (r.end.y + 26.0) if below else (r.position.y - bh - 26.0)
+		by = clampf(by, 20.0, sw.y - bh - 20.0)
+		_intro_bubble_locked = true
+	_intro_bubble_pos = Vector2(18.0, by)
+	_intro_bubble.position = _intro_bubble_pos
+	_intro_bubble.size = Vector2(bw, bh)
+	_intro_bubble.pivot_offset = _intro_bubble.size * 0.5
+
+
+func _intro_kill_anim() -> void:
+	if _intro_anim != null and _intro_anim.is_valid():
+		_intro_anim.kill()
+	_intro_anim = null
+
+
+func _intro_set_shown(on: bool) -> void:
+	if not (is_instance_valid(_intro_dim) and is_instance_valid(_intro_bubble)):
+		return
+	_intro_kill_anim()
+	if on:
+		_intro_dim.visible = true
+		_intro_bubble.visible = true
+		_intro_layout_bubble(false)
+		_intro_dim.modulate.a = 0.0
+		_intro_bubble.modulate.a = 0.0
+		_intro_bubble.pivot_offset = _intro_bubble.size * 0.5
+		_intro_bubble.scale = Vector2(0.72, 0.72)
+		_intro_anim = create_tween().set_parallel(true)
+		_intro_anim.tween_property(_intro_dim, "modulate:a", 1.0, 0.12)
+		_intro_anim.tween_property(_intro_bubble, "modulate:a", 1.0, 0.12)
+		_intro_anim.tween_property(_intro_bubble, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	else:
+		_intro_bubble.pivot_offset = _intro_bubble.size * 0.5
+		_intro_anim = create_tween().set_parallel(true)
+		_intro_anim.tween_property(_intro_dim, "modulate:a", 0.0, 0.12)
+		_intro_anim.tween_property(_intro_bubble, "modulate:a", 0.0, 0.12)
+		_intro_anim.tween_property(_intro_bubble, "scale", Vector2(0.72, 0.72), 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+		_intro_anim.chain().tween_callback(func() -> void:
+			if is_instance_valid(_intro_dim):
+				_intro_dim.visible = false
+			if is_instance_valid(_intro_bubble):
+				_intro_bubble.visible = false
+				_intro_bubble.scale = Vector2.ONE
+		)
+
+
+func _spawn_intro_demos() -> void:
+	_clear_intro_demos()
+	if not is_instance_valid(_field):
+		return
+	var mid: Vector2 = _field.size * Vector2(0.5, 0.28)
+	_intro_demo_gold = _make_intro_demo(_tex_gold, COIN_SZ * 2.2, mid + Vector2(-90, 0))
+	_intro_demo_bomb = _make_intro_demo(_tex_bomb, BOMB_SZ, mid + Vector2(90, 0))
+	if is_instance_valid(_intro_demo_gold):
+		_field.add_child(_intro_demo_gold)
+	if is_instance_valid(_intro_demo_bomb):
+		_field.add_child(_intro_demo_bomb)
+
+
+func _make_intro_demo(tex: Texture2D, sz: float, pos: Vector2) -> TextureRect:
+	var tr := TextureRect.new()
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tr.z_index = 8
+	tr.size = Vector2(sz, sz)
+	tr.position = pos - Vector2(sz, sz) * 0.5
+	if tex:
+		tr.texture = tex
+	return tr
+
+
+func _clear_intro_demos() -> void:
+	if is_instance_valid(_intro_demo_gold):
+		_intro_demo_gold.queue_free()
+	if is_instance_valid(_intro_demo_bomb):
+		_intro_demo_bomb.queue_free()
+	_intro_demo_gold = null
+	_intro_demo_bomb = null
+
+
+func _flat(bg: Color, border: Color, radius := 10, bw := 2, margin := 10) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = bg
+	s.set_corner_radius_all(radius)
+	s.set_border_width_all(bw)
+	s.border_color = border
+	s.set_content_margin_all(margin)
+	return s
+
+
+func _lab(l: Label, fs: int, color: Color) -> void:
+	l.add_theme_font_size_override("font_size", fs)
+	l.add_theme_color_override("font_color", color)
+
+
+func _btn_hud(b: Button) -> void:
+	b.add_theme_stylebox_override("normal", _flat(WOOD, WOOD_BORDER))
+	b.add_theme_stylebox_override("hover", _flat(WOOD, WOOD_BORDER))
+	b.add_theme_stylebox_override("pressed", _flat(WOOD.darkened(0.18), WOOD_BORDER.darkened(0.1)))
+	b.add_theme_stylebox_override("disabled", _flat(WOOD.darkened(0.62), SURF_BORDER.darkened(0.2)))
+	b.add_theme_color_override("font_color", GOLD)
+	b.add_theme_color_override("font_pressed_color", GOLD.darkened(0.08))
+	b.add_theme_color_override("font_hover_color", GOLD)
+	b.add_theme_color_override("font_disabled_color", Color(MUTED, 0.55))
+
+
 func _slam_area() -> Vector2:
 	var s: Vector2 = size
 	if s.x < 8.0:
@@ -1071,7 +1502,7 @@ func _slam_font_px(text: String, area: Vector2) -> int:
 	return best
 
 
-func _slam(text: String) -> void:
+func _slam(text: String, on_done: Callable = Callable()) -> void:
 	var area: Vector2 = _slam_area()
 	var font_px: int = _slam_font_px(text, area)
 	var slam := Label.new()
@@ -1102,7 +1533,11 @@ func _slam(text: String) -> void:
 	st.set_parallel(false)
 	st.tween_interval(0.55)
 	st.tween_property(slam, "modulate:a", 0.0, 0.3)
-	st.tween_callback(slam.queue_free)
+	st.tween_callback(func() -> void:
+		slam.queue_free()
+		if on_done.is_valid():
+			on_done.call()
+	)
 
 
 func _finish(fail: bool) -> void:

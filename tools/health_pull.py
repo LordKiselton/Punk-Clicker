@@ -29,6 +29,7 @@ AD_PLACEMENTS = (
     ("offline_x2", "×2 вход"),
     ("boss_dmg", "×2 урон"),
     ("boss_time", "+15с босс"),
+    ("catch_retry", "ловец ретрай"),
 )
 
 
@@ -105,6 +106,9 @@ def parse_rustore_csvs() -> dict:
         with path.open(encoding="utf-8-sig", newline="") as f:
             reader = csv.reader(f)
             header = next(reader, None)
+            header_text = " ".join(header or [])
+            if any(event in header_text for event in EVENTS) or "tutorial_step" in header_text:
+                continue
             for row in reader:
                 if not row or row[0].strip().lower().startswith("всего"):
                     continue
@@ -143,6 +147,71 @@ def parse_rustore_csvs() -> dict:
         "cr_prev": cr_prev,
         "cr_all": cr_all,
     }
+
+
+def parse_appmetrica_events_csv(_d7: date, _p7a: date, _p7b: date) -> dict:
+    """Fallback export: sums of daily unique users, not window uniques."""
+    known = (
+        "ad_watched", "tutorial_done", "prestige", "daily_claim",
+        "first_boss_win", "boss_fail", "econ_snapshot", "ad_offered",
+        "tutorial_step", "stage_up",
+    )
+    for path in sorted(INBOX.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True):
+        with path.open(encoding="utf-8-sig", newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader, None) or []
+            indexes = {
+                event: i
+                for i, title in enumerate(header)
+                for event in known
+                if event in title
+            }
+            if not indexes or not header:
+                continue
+            parsed_rows: list[tuple[date, list[str]]] = []
+            for row in reader:
+                if not row:
+                    continue
+                try:
+                    day = date.fromisoformat(row[0].strip())
+                except (ValueError, IndexError):
+                    continue
+                parsed_rows.append((day, row))
+            active_days = [
+                day for day, row in parsed_rows
+                if any(
+                    i < len(row) and float(row[i] or 0) > 0
+                    for i in indexes.values()
+                )
+            ]
+            if not active_days:
+                continue
+            current_end = max(active_days)
+            current_start = current_end - timedelta(days=6)
+            previous_end = current_start - timedelta(days=1)
+            previous_start = previous_end - timedelta(days=6)
+            current = {event: 0 for event in indexes}
+            previous = {event: 0 for event in indexes}
+            for day, row in parsed_rows:
+                target = current if current_start <= day <= current_end else (
+                    previous if previous_start <= day <= previous_end else None
+                )
+                if target is None:
+                    continue
+                for event, i in indexes.items():
+                    try:
+                        target[event] += int(float(row[i] or 0))
+                    except (IndexError, ValueError):
+                        pass
+            return {
+                "ok": True,
+                "file": path.name,
+                "current": current,
+                "previous": previous,
+                "current_period": f"{current_start.isoformat()} .. {current_end.isoformat()}",
+                "previous_period": f"{previous_start.isoformat()} .. {previous_end.isoformat()}",
+            }
+    return {"ok": False}
 
 
 def parse_rsya() -> dict:
@@ -204,17 +273,23 @@ def main() -> None:
     p7a, p7b = today - timedelta(days=13), today - timedelta(days=7)
     launch, end = LAUNCH.isoformat(), today.isoformat()
 
-    t_all = totals(am(token, f"metrics=ym:u:users,ym:u:newUsers,ym:u:sessions&date1={launch}&date2={end}"))
-    t_7 = totals(am(token, f"metrics=ym:u:users,ym:u:newUsers,ym:u:sessions&date1={d7.isoformat()}&date2={end}"))
-    t_p = totals(am(token, f"metrics=ym:u:users,ym:u:newUsers,ym:u:sessions&date1={p7a.isoformat()}&date2={p7b.isoformat()}"))
-    dur = totals(am(token, f"metrics=ym:s:avgSessionDuration,ym:s:sessions,ym:s:users&date1={d7.isoformat()}&date2={end}"))
-    dur_all = totals(am(token, f"metrics=ym:s:avgSessionDuration&date1={launch}&date2={end}"))
-    crash = totals(am(token, f"metrics=ym:cr:crashes&date1={launch}&date2={end}"))
-    ev_all = event_map(am(token, f"metrics=ym:ce:users&dimensions=ym:ce:eventLabel&date1={launch}&date2={end}&limit=30&sort=-ym:ce:users"))
-    ev_7 = event_map(am(token, f"metrics=ym:ce:users&dimensions=ym:ce:eventLabel&date1={d7.isoformat()}&date2={end}&limit=30&sort=-ym:ce:users"))
-    ad_all = ad_placement_counts(token, launch, end)
-    ad_7 = ad_placement_counts(token, d7.isoformat(), end)
-    daily = am(token, f"metrics=ym:u:users,ym:u:newUsers,ym:u:sessions&dimensions=ym:u:date&date1={d7.isoformat()}&date2={end}&limit=14&sort=ym:u:date")
+    skip_api = os.environ.get("HEALTH_SKIP_APPMETRICA") == "1"
+    if skip_api:
+        t_all = t_7 = t_p = dur = dur_all = crash = []
+        ev_all = ev_7 = ad_all = ad_7 = {}
+        daily = None
+    else:
+        t_all = totals(am(token, f"metrics=ym:u:users,ym:u:newUsers,ym:u:sessions&date1={launch}&date2={end}"))
+        t_7 = totals(am(token, f"metrics=ym:u:users,ym:u:newUsers,ym:u:sessions&date1={d7.isoformat()}&date2={end}"))
+        t_p = totals(am(token, f"metrics=ym:u:users,ym:u:newUsers,ym:u:sessions&date1={p7a.isoformat()}&date2={p7b.isoformat()}"))
+        dur = totals(am(token, f"metrics=ym:s:avgSessionDuration,ym:s:sessions,ym:s:users&date1={d7.isoformat()}&date2={end}"))
+        dur_all = totals(am(token, f"metrics=ym:s:avgSessionDuration&date1={launch}&date2={end}"))
+        crash = totals(am(token, f"metrics=ym:cr:crashes&date1={launch}&date2={end}"))
+        ev_all = event_map(am(token, f"metrics=ym:ce:users&dimensions=ym:ce:eventLabel&date1={launch}&date2={end}&limit=30&sort=-ym:ce:users"))
+        ev_7 = event_map(am(token, f"metrics=ym:ce:users&dimensions=ym:ce:eventLabel&date1={d7.isoformat()}&date2={end}&limit=30&sort=-ym:ce:users"))
+        ad_all = ad_placement_counts(token, launch, end)
+        ad_7 = ad_placement_counts(token, d7.isoformat(), end)
+        daily = am(token, f"metrics=ym:u:users,ym:u:newUsers,ym:u:sessions&dimensions=ym:u:date&date1={d7.isoformat()}&date2={end}&limit=14&sort=ym:u:date")
 
     users, new, sess = (t_all + [None, None, None])[:3]
     u7, n7, s7 = (t_7 + [None, None, None])[:3]
@@ -234,6 +309,7 @@ def main() -> None:
 
     ru = parse_rustore_csvs()
     ads = parse_rsya()
+    event_csv = parse_appmetrica_events_csv(d7, p7a, p7b)
 
     def delta(a, b):
         if a is None or b is None or b == 0:
@@ -274,24 +350,41 @@ def main() -> None:
         "|--|--:|--:|",
     ]
     for ev in EVENTS:
-        lines.append(f"| `{ev}` | {ev_all.get(ev, 0)} | {ev_7.get(ev, 0)} |")
+        life_value = ev_all.get(ev) if ev_all else None
+        week_value = ev_7.get(ev) if ev_7 else None
+        lines.append(f"| `{ev}` | {fmt_n(life_value)} | {fmt_n(week_value)} |")
 
-    lines += [
-        "",
-        "Rewarded по placement (`ad_watched`, просмотры):",
-        "| Placement | жизнь | 7д | доля жизни |",
-        "|--|--:|--:|--:|",
-    ]
-    ad_sum = sum(ad_all.get(pid, 0) for pid, _ in AD_PLACEMENTS) or sum(ad_all.values())
-    for pid, title in AD_PLACEMENTS:
-        n = ad_all.get(pid, 0)
-        ad_n7 = ad_7.get(pid, 0)
-        share = f"{100.0 * n / ad_sum:.0f}%" if ad_sum else "—"
-        lines.append(f"| {title} (`{pid}`) | {n} | {ad_n7} | {share} |")
-    other = sum(v for k, v in ad_all.items() if k not in {p for p, _ in AD_PLACEMENTS})
-    if other:
-        lines.append(f"| прочее | {other} | {sum(v for k, v in ad_7.items() if k not in {p for p, _ in AD_PLACEMENTS})} | — |")
-    lines.append(f"| **сумма** | **{ad_sum}** | **{sum(ad_7.get(pid, 0) for pid, _ in AD_PLACEMENTS)}** | 100% |")
+    if event_csv.get("ok"):
+        lines += [
+            "",
+            f"CSV событий `{event_csv['file']}` — **сумма дневных уникальных пользователей**, не уникальные за всё окно. Последний непустой день используется как конец периода:",
+            f"| Событие | 7д `{event_csv['current_period']}` | 7д до `{event_csv['previous_period']}` | WoW |",
+            "|--|--:|--:|--:|",
+        ]
+        for event in event_csv["current"]:
+            cur = event_csv["current"].get(event, 0)
+            prev = event_csv["previous"].get(event, 0)
+            lines.append(f"| `{event}` | {cur} | {prev} | {delta(cur, prev)} |")
+
+    if ad_all or ad_7:
+        lines += [
+            "",
+            "Rewarded по placement (`ad_watched`, просмотры):",
+            "| Placement | жизнь | 7д | доля жизни |",
+            "|--|--:|--:|--:|",
+        ]
+        ad_sum = sum(ad_all.get(pid, 0) for pid, _ in AD_PLACEMENTS) or sum(ad_all.values())
+        for pid, title in AD_PLACEMENTS:
+            n = ad_all.get(pid, 0)
+            ad_n7 = ad_7.get(pid, 0)
+            share = f"{100.0 * n / ad_sum:.0f}%" if ad_sum else "—"
+            lines.append(f"| {title} (`{pid}`) | {n} | {ad_n7} | {share} |")
+        other = sum(v for k, v in ad_all.items() if k not in {p for p, _ in AD_PLACEMENTS})
+        if other:
+            lines.append(f"| прочее | {other} | {sum(v for k, v in ad_7.items() if k not in {p for p, _ in AD_PLACEMENTS})} | — |")
+        lines.append(f"| **сумма** | **{ad_sum}** | **{sum(ad_7.get(pid, 0) for pid, _ in AD_PLACEMENTS)}** | 100% |")
+    else:
+        lines += ["", "Rewarded по placement: **нет в текущем CSV-экспорте**."]
 
     if users:
         tut = ev_all.get("tutorial_done", 0)
